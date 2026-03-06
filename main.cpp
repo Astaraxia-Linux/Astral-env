@@ -25,32 +25,46 @@ void print_version() {
 }
 
 void print_help(const char* prog) {
-    std::cout << "Usage: " << prog << " <command> [options]\n\n";
-    std::cout << "Commands:\n";
-    std::cout << "  init                 Scaffold astral-env.stars\n";
-    std::cout << "  lock                 Generate lockfile from .stars\n";
-    std::cout << "  build                Build environment from lockfile\n";
-    std::cout << "  shell                Enter interactive shell\n";
-    std::cout << "  run <cmd...>         Run command in environment\n";
-    std::cout << "  status               Show environment status\n";
-    std::cout << "  gc                   Garbage collect unused entries\n";
-    std::cout << "  store list           List store entries\n";
-    std::cout << "  store size           Show store disk usage\n";
-    std::cout << "  system diff          Show system config diff\n";
-    std::cout << "  system apply         Apply system config\n";
-    std::cout << "  system rollback      Rollback system changes\n";
-    std::cout << "  system check         Validate system config\n";
-    std::cout << "  system init          Create system env.stars config\n";
-    std::cout << "  system init-user     Create user config (e.g., izumi.stars)\n";
-    std::cout << "  snap <path>         Snapshot a file or directory\n";
-    std::cout << "  snap list           List snapshots\n";
-    std::cout << "  snap restore <id>  Restore a snapshot\n";
-    std::cout << "  snap prune          Prune old snapshots\n";
-    std::cout << "\nOptions:\n";
-    std::cout << "  -v, --verbose        Verbose output\n";
-    std::cout << "  -q, --quiet          Quiet output\n";
-    std::cout << "  -V, --version        Show version\n";
-    std::cout << "  -h, --help           Show this help\n";
+    std::cout << "Usage: " << prog << " <command> [options]\n"
+              << "\n"
+              << "Environment Commands:\n"
+              << "  init                  Scaffold astral-env.stars in current directory\n"
+              << "  lock [--update [pkg]] Generate/update lockfile from .stars\n"
+              << "  build [--force]       Build environment from lockfile\n"
+              << "  shell [--dir <d>]     Enter interactive environment shell\n"
+              << "  run <cmd...>          Run command inside the environment\n"
+              << "  status                Show what's installed vs missing\n"
+              << "\n"
+              << "System Commands:\n"
+              << "  system init           Create /etc/astral/env/env.stars\n"
+              << "  system init-user <u>  Create per-user config + dotfiles directory\n"
+              << "  system diff           Show pending changes\n"
+              << "  system apply          Apply changes (--dry-run, --yes, --user, --global-only)\n"
+              << "  system rollback       Roll back (--list, --to <id>)\n"
+              << "  system check          Validate all .stars files\n"
+              << "\n"
+              << "Snapshot Commands:\n"
+              << "  snap <path>           Snapshot a file or directory\n"
+              << "  snap list [path]      List snapshots (optionally filtered by path)\n"
+              << "  snap restore <id>     Restore a snapshot (--dest <path> for alternate location)\n"
+              << "  snap prune            Prune old snapshots (--keep-last N, --older-than Nd)\n"
+              << "\n"
+              << "Store Commands:\n"
+              << "  store list            List all store entries\n"
+              << "  store size            Show total store disk usage\n"
+              << "  gc [--dry-run]        Garbage collect unused entries (--max-age <days>)\n"
+              << "\n"
+              << "Daemon Commands:\n"
+              << "  snapd start           Start snapshot daemon (enables at boot)\n"
+              << "  snapd stop            Stop snapshot daemon\n"
+              << "  snapd restart         Restart snapshot daemon\n"
+              << "  snapd status          Show daemon status\n"
+              << "\n"
+              << "Global Options:\n"
+              << "  -v, --verbose         Verbose output\n"
+              << "  -q, --quiet           Quiet output\n"
+              << "  -V, --version         Show version\n"
+              << "  -h, --help            Show this help\n";
 }
 
 int cmd_init(const std::vector<std::string>&) {
