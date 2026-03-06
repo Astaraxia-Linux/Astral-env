@@ -69,8 +69,8 @@ Think of it as:
 
 ```bash
 # Clone
-git clone https://github.com/Astaraxia-Linux/astral-env
-cd astral-env
+git clone https://github.com/Astaraxia-Linux/Astral-env
+cd Astral-env
 
 # Build
 cmake -B build -DCMAKE_BUILD_TYPE=Release
