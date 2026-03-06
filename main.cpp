@@ -1,0 +1,1029 @@
+#include "config/conf.hpp"
+#include "store/store.hpp"
+#include "store/entry.hpp"
+#include "lock/lockfile.hpp"
+#include "env/shell.hpp"
+#include "gc/gc.hpp"
+#include "system/differ.hpp"
+#include "system/applier.hpp"
+#include "system/system_conf.hpp"
+#include "snap/snap.hpp"
+#include "util/process.hpp"
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <optional>
+#include <cstring>
+#include <fstream>
+
+namespace {
+
+
+void print_version() {
+    std::cout << "astral-env " << config::version() << "\n";
+}
+
+void print_help(const char* prog) {
+    std::cout << "Usage: " << prog << " <command> [options]\n\n";
+    std::cout << "Commands:\n";
+    std::cout << "  init                 Scaffold astral-env.stars\n";
+    std::cout << "  lock                 Generate lockfile from .stars\n";
+    std::cout << "  build                Build environment from lockfile\n";
+    std::cout << "  shell                Enter interactive shell\n";
+    std::cout << "  run <cmd...>         Run command in environment\n";
+    std::cout << "  status               Show environment status\n";
+    std::cout << "  gc                   Garbage collect unused entries\n";
+    std::cout << "  store list           List store entries\n";
+    std::cout << "  store size           Show store disk usage\n";
+    std::cout << "  system diff          Show system config diff\n";
+    std::cout << "  system apply         Apply system config\n";
+    std::cout << "  system rollback      Rollback system changes\n";
+    std::cout << "  system check         Validate system config\n";
+    std::cout << "  system init          Create system env.stars config\n";
+    std::cout << "  system init-user     Create user config (e.g., izumi.stars)\n";
+    std::cout << "  snap <path>         Snapshot a file or directory\n";
+    std::cout << "  snap list           List snapshots\n";
+    std::cout << "  snap restore <id>  Restore a snapshot\n";
+    std::cout << "  snap prune          Prune old snapshots\n";
+    std::cout << "\nOptions:\n";
+    std::cout << "  -v, --verbose        Verbose output\n";
+    std::cout << "  -q, --quiet          Quiet output\n";
+    std::cout << "  -V, --version        Show version\n";
+    std::cout << "  -h, --help           Show this help\n";
+}
+
+int cmd_init(const std::vector<std::string>&) {
+    auto stars_path = std::filesystem::path("astral-env.stars");
+    
+    if (std::filesystem::exists(stars_path)) {
+        std::cout << "astral-env.stars already exists, not overwriting.\n";
+        return 0;
+    }
+    
+    std::string content = R"($ENV.Version = "3"
+
+$ENV.Metadata: {
+    Name        = "my-project"
+    Description = "Dev environment"
+};
+
+$ENV.Packages: {
+    # Add packages here, e.g.:
+    # python >= 3.11
+    # nodejs >= 20.0
+};
+
+$ENV.Vars: {
+    # DEBUG = "true"
+};
+
+$ENV.Shell: {
+    # echo "entering environment"
+};
+)";
+    
+    std::ofstream f(stars_path);
+    f << content;
+    std::cout << "Created astral-env.stars\n";
+    
+    return 0;
+}
+
+int cmd_lock(const std::vector<std::string>& args) {
+    bool update_all = false;
+    std::vector<std::string> update_packages;
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--update") {
+            if (i + 1 < args.size() && args[i+1] != "--update") {
+                update_packages.push_back(args[++i]);
+            } else {
+                update_all = true;
+            }
+        }
+    }
+    
+    auto stars_path = std::filesystem::path("astral-env.stars");
+    auto lock_path = std::filesystem::path("astral-env.lock");
+    auto repo_bin = std::filesystem::path("/usr/share/astral/bin");
+    
+    try {
+        auto lock = lock::generate(stars_path, repo_bin, update_all, update_packages);
+        lock::write(lock, lock_path);
+        std::cout << "Wrote " << lock_path << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_build(const std::vector<std::string>& args) {
+    bool force = false;
+    
+    for (const auto& arg : args) {
+        if (arg == "--force") force = true;
+    }
+    
+    auto lock_path = std::filesystem::path("astral-env.lock");
+    auto store_root = std::filesystem::path("/astral-env/store");
+    
+    if (!std::filesystem::exists(lock_path)) {
+        std::cerr << "Error: no astral-env.lock found.\n";
+        std::cerr << "       Run 'astral-env lock' first to generate it.\n";
+        return 1;
+    }
+    
+    try {
+        auto lock = lock::read(lock_path);
+        
+        for (const auto& entry : lock.entries) {
+            // Now we can use lock::LockEntry directly since it's the same as store::LockEntry
+            auto result = store::install(entry, store_root, 4, force);
+            if (!result) {
+                std::cerr << "Failed to install " << entry.name << "\n";
+                return 1;
+            }
+        }
+        
+        std::cout << "Build complete.\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_shell(const std::vector<std::string>& args) {
+    std::filesystem::path dir = std::filesystem::current_path();
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--dir" && i + 1 < args.size()) {
+            dir = args[++i];
+        }
+    }
+    
+    auto lock_path = dir / "astral-env.lock";
+    auto stars_path = dir / "astral-env.stars";
+    
+    if (!std::filesystem::exists(lock_path)) {
+        std::cerr << "Error: no astral-env.lock found in " << dir << "\n";
+        return 1;
+    }
+    
+    try {
+        env::enter_shell(lock_path, stars_path);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_run(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << "Error: no command specified\n";
+        return 1;
+    }
+    
+    auto lock_path = std::filesystem::path("astral-env.lock");
+    auto stars_path = std::filesystem::path("astral-env.stars");
+    
+    if (!std::filesystem::exists(lock_path)) {
+        std::cerr << "Error: no astral-env.lock found.\n";
+        return 1;
+    }
+    
+    try {
+        return env::run_command(lock_path, stars_path, args);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int cmd_status(const std::vector<std::string>&) {
+    auto lock_path = std::filesystem::path("astral-env.lock");
+    auto store_root = std::filesystem::path("/astral-env/store");
+    
+    if (!std::filesystem::exists(lock_path)) {
+        std::cout << "No lockfile found.\n";
+        return 0;
+    }
+    
+    auto lock = lock::read(lock_path);
+    
+    std::cout << "astral-env status\n";
+    std::cout << "Lock file: " << lock_path << "\n";
+    std::cout << "Packages:\n";
+    
+    for (const auto& entry : lock.entries) {
+        std::cout << "  [";
+        
+        // FIX: Check build_kind first - system installs don't go to store
+        if (entry.build_kind == lock::BuildKind::System) {
+            // System packages are installed via astral -S, not the store
+            std::cout << "✓] " << entry.name;
+            if (!entry.version.empty()) {
+                std::cout << " " << entry.version;
+            }
+            std::cout << " (system install via astral)\n";
+        } else {
+            bool present = store::entry_exists(entry.store_path);
+            std::cout << (present ? "✓" : "✗") << "] " << entry.name << " " << entry.version;
+            if (!present) {
+                std::cout << " (store: MISSING — run astral-env build)";
+            } else {
+                std::cout << " (store: present)";
+            }
+            std::cout << "\n";
+        }
+    }
+    
+    return 0;
+}
+
+int cmd_gc(const std::vector<std::string>& args) {
+    bool dry_run = false;  // Default: actually collect (opposite of before)
+    int gc_keep_days = 30;
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--dry-run") {
+            dry_run = true;
+        } else if (args[i] == "--max-age" && i + 1 < args.size()) {
+            gc_keep_days = std::stoi(args[++i]);
+        }
+    }
+    
+    auto store_root = std::filesystem::path("/astral-env/store");
+    
+    // Search multiple roots for lockfiles - not just /home
+    std::vector<std::filesystem::path> search_roots;
+    const char* home = std::getenv("HOME");
+    if (home) search_roots.emplace_back(home);
+    search_roots.emplace_back("/home");
+    search_roots.emplace_back("/root");
+    // Future: read from /astral-env/registry
+    
+    // Collect lockfiles from all search roots
+    std::vector<std::filesystem::path> all_lockfiles;
+    for (const auto& root : search_roots) {
+        auto lockfiles = gc::find_lockfiles(root);
+        all_lockfiles.insert(all_lockfiles.end(), lockfiles.begin(), lockfiles.end());
+    }
+    
+    try {
+        // FIX: Use multiple search roots, not just one
+        auto candidates = gc::find_candidates_multi(store_root, all_lockfiles, gc_keep_days);
+        
+        if (candidates.empty()) {
+            std::cout << "No GC candidates found.\n";
+            return 0;
+        }
+        
+        uint64_t total_size = 0;
+        for (const auto& c : candidates) {
+            total_size += c.size;
+        }
+        
+        std::cout << "Candidates for collection:\n";
+        for (const auto& c : candidates) {
+            std::cout << "  " << c.path.filename().string() << " - "
+                      << (c.size / 1024 / 1024) << " MB\n";
+        }
+        std::cout << "Total: " << (total_size / 1024 / 1024) << " MB\n";
+        
+        if (dry_run) {
+            std::cout << "Run without --dry-run to collect these entries.\n";
+        } else {
+            auto freed = gc::collect(store_root, candidates);
+            std::cout << "Freed " << (freed / 1024 / 1024) << " MB\n";
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_snap(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << "Usage: astral-env snap <path>\n";
+        return 1;
+    }
+    
+    std::filesystem::path path = args[0];
+    
+    if (!std::filesystem::exists(path)) {
+        std::cerr << "Error: Path does not exist: " << path << "\n";
+        return 1;
+    }
+    
+    try {
+        auto result = snap::create(path, snap::SNAP_STORE, snap::SNAP_INDEX, "manual");
+        
+        std::cout << "Created snapshot: " << result.snapshot_id << "\n";
+        std::cout << "  Original: " << (result.original_bytes / 1024) << " KB\n";
+        std::cout << "  Compressed: " << (result.compressed_bytes / 1024) << " KB\n";
+        if (result.deduped) {
+            std::cout << "  (deduplicated - content unchanged)\n";
+        }
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int cmd_snap_list(const std::vector<std::string>& args) {
+    std::optional<std::filesystem::path> filter_path;
+    
+    if (!args.empty()) {
+        filter_path = args[0];
+    }
+    
+    try {
+        auto snapshots = snap::list(snap::SNAP_INDEX, filter_path);
+        
+        if (snapshots.empty()) {
+            std::cout << "No snapshots found.\n";
+            return 0;
+        }
+        
+        if (filter_path) {
+            std::cout << "Snapshots for: " << *filter_path << "\n";
+        } else {
+            std::cout << "All snapshots:\n";
+        }
+        
+        for (const auto& s : snapshots) {
+            std::cout << "  " << s.id << "  " << s.path.string() << " (" << s.reason << ")\n";
+        }
+        
+        std::cout << "Total: " << snapshots.size() << " snapshots\n";
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int cmd_snap_restore(const std::vector<std::string>& args) {
+    if (args.empty()) {
+        std::cerr << "Usage: astral-env snap restore <id> [--dest <path>]\n";
+        return 1;
+    }
+    
+    std::string snap_id = args[0];
+    std::optional<std::filesystem::path> dest;
+    
+    // Check for --dest
+    for (size_t i = 1; i < args.size(); i++) {
+        if (args[i] == "--dest" && i + 1 < args.size()) {
+            dest = args[i + 1];
+            break;
+        }
+    }
+    
+    try {
+        snap::restore(snap_id, snap::SNAP_INDEX, snap::SNAP_STORE, dest);
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int cmd_snap_prune(const std::vector<std::string>&) {
+    try {
+        int pruned = snap::prune(snap::SNAP_INDEX, snap::SNAP_STORE, 30, 5);
+        std::cout << "Pruned " << pruned << " snapshots\n";
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int cmd_store_list(const std::vector<std::string>&) {
+    auto store_root = std::filesystem::path("/astral-env/store");
+    
+    try {
+        auto entries = store::list_store_entries(store_root);
+        
+        std::cout << "Store entries:\n";
+        for (const auto& entry : entries) {
+            std::cout << "  " << entry.filename().string() << "\n";
+        }
+        std::cout << "Total: " << entries.size() << " entries\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_store_size(const std::vector<std::string>&) {
+    auto store_root = std::filesystem::path("/astral-env/store");
+    
+    try {
+        auto entries = store::list_store_entries(store_root);
+        auto size = store::store_size(store_root);
+        
+        std::cout << "Store: " << entries.size() << " entries, "
+                  << (size / 1024 / 1024) << " MB total\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_system_diff(const std::vector<std::string>& args) {
+    bool global_only = false;
+    std::string target_user;
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--global-only") global_only = true;
+        else if (args[i] == "--user" && i + 1 < args.size()) target_user = args[++i];
+    }
+    
+    auto env_path = std::filesystem::path("/etc/astral/env/env.stars");
+    auto env_dir = std::filesystem::path("/etc/astral/env");
+    
+    if (!std::filesystem::exists(env_path)) {
+        std::cerr << "Error: " << env_path << " not found.\n";
+        return 1;
+    }
+    
+    try {
+        auto config = astral_sys::parse_system_config(env_path);
+        
+        // FIX: Load user configs
+        std::vector<std::pair<std::string, astral_sys::UserConfig>> user_configs;
+        if (!global_only) {
+            user_configs = astral_sys::load_all_user_configs(env_dir);
+            
+            // Filter to target user if specified
+            if (!target_user.empty()) {
+                std::vector<std::pair<std::string, astral_sys::UserConfig>> filtered;
+                for (auto& uc : user_configs) {
+                    if (uc.first == target_user) {
+                        filtered.push_back(uc);
+                        break;
+                    }
+                }
+                user_configs = filtered;
+            }
+        }
+        
+        auto diffs = astral_sys::diff_system(config, user_configs);
+        astral_sys::print_diff(diffs);
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_system_apply(const std::vector<std::string>& args) {
+    bool dry_run = false;
+    bool prune = false;
+    bool yes = false;
+    bool global_only = false;
+    std::string target_user;
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--dry-run") dry_run = true;
+        else if (args[i] == "--prune") prune = true;
+        else if (args[i] == "--yes") yes = true;
+        else if (args[i] == "--user" && i + 1 < args.size()) target_user = args[++i];
+        else if (args[i] == "--global-only") global_only = true;
+    }
+    
+    auto env_path = std::filesystem::path("/etc/astral/env/env.stars");
+    auto env_dir = std::filesystem::path("/etc/astral/env");
+    
+    if (!std::filesystem::exists(env_path)) {
+        std::cerr << "Error: " << env_path << " not found.\n";
+        std::cerr << "Run 'astral-env system init' first.\n";
+        return 1;
+    }
+    
+    try {
+        // Parse global config
+        auto config = astral_sys::parse_system_config(env_path);
+        
+        // Load user configs
+        std::vector<std::pair<std::string, astral_sys::UserConfig>> user_configs;
+        if (!global_only) {
+            user_configs = astral_sys::load_all_user_configs(env_dir);
+            
+            // Filter to target user if specified
+            if (!target_user.empty()) {
+                std::vector<std::pair<std::string, astral_sys::UserConfig>> filtered;
+                for (auto& uc : user_configs) {
+                    if (uc.first == target_user) {
+                        filtered.push_back(uc);
+                        break;
+                    }
+                }
+                user_configs = filtered;
+            }
+        }
+        
+        // Compute diff
+        auto diffs = astral_sys::diff_system(config, user_configs);
+        
+        // Show diff
+        std::cout << "astral-env system apply\n";
+        std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        
+        if (diffs.empty()) {
+            std::cout << "No changes needed.\n";
+            return 0;
+        }
+        
+        for (const auto& d : diffs) {
+            // Convert action enum to string
+            std::string action_str;
+            switch (d.action) {
+                case astral_sys::DiffAction::Install: action_str = "+"; break;
+                case astral_sys::DiffAction::Remove: action_str = "-"; break;
+                case astral_sys::DiffAction::Enable: action_str = "~"; break;
+                case astral_sys::DiffAction::Disable: action_str = "~"; break;
+                case astral_sys::DiffAction::Change: action_str = "~"; break;
+                case astral_sys::DiffAction::Symlink: action_str = "+"; break;
+                case astral_sys::DiffAction::Unlink: action_str = "-"; break;
+                case astral_sys::DiffAction::Conflict: action_str = "!"; break;
+                default: action_str = "?"; break;
+            }
+            
+            std::cout << "  [" << action_str << "] " << d.name << "\n";
+            if (!d.target.empty()) {
+                std::cout << "      -> " << d.target << "\n";
+            }
+        }
+        
+        std::cout << "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        
+        // Ask for confirmation unless --yes
+        if (!yes) {
+            std::cout << "Apply these changes? [y/N] ";
+            std::string response;
+            std::getline(std::cin, response);
+            if (response != "y" && response != "Y") {
+                std::cout << "Aborted.\n";
+                return 0;
+            }
+        }
+        
+        if (dry_run) {
+            std::cout << "Dry run — no changes made.\n";
+            return 0;
+        }
+
+        int applied = astral_sys::apply_diff(diffs, false, prune, yes);
+        std::cout << "Applied " << applied << " change(s).\n";
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_system_rollback(const std::vector<std::string>& args) {
+    std::string snapshot_id;
+    
+    for (size_t i = 0; i < args.size(); i++) {
+        if (args[i] == "--list") {
+            auto snapshots = astral_sys::list_snapshots();
+            std::cout << "Available snapshots:\n";
+            for (const auto& s : snapshots) {
+                std::cout << "  " << s << "\n";
+            }
+            return 0;
+        } else if (args[i] == "--to" && i + 1 < args.size()) {
+            snapshot_id = args[++i];
+        }
+    }
+    
+    try {
+        // Check if rollback is actually implemented
+        if (!astral_sys::rollback_implemented()) {
+            std::cerr << "WARNING: rollback is not yet fully implemented.\n";
+            std::cerr << "Only partial restoration is supported.\n";
+            return 1;
+        }
+        
+        if (astral_sys::rollback(snapshot_id)) {
+            std::cout << "Rollback complete.\n";
+        } else {
+            std::cerr << "Rollback failed.\n";
+            return 1;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
+    
+    return 0;
+}
+
+int cmd_system_init(const std::vector<std::string>&) {
+    auto env_dir = std::filesystem::path("/etc/astral/env");
+    auto env_path = env_dir / "env.stars";
+    
+    // Create directory if it doesn't exist with permissions writable by group (2775)
+    if (!std::filesystem::exists(env_dir)) {
+        std::filesystem::create_directories(env_dir);
+        // Set permissions: rwxrwsr-x (2775) - owner and group can read/write/execute, others can read/execute
+        // Also setgid bit so new files inherit group ownership
+        std::filesystem::permissions(env_dir, 
+            std::filesystem::perms::owner_all | 
+            std::filesystem::perms::group_all | 
+            std::filesystem::perms::others_exec |
+            std::filesystem::perms::others_read |
+            std::filesystem::perms::set_gid,
+            std::filesystem::perm_options::replace);
+        std::cout << "Created " << env_dir << "\n";
+    }
+    
+    if (std::filesystem::exists(env_path)) {
+        std::cout << env_path << " already exists, not overwriting.\n";
+        return 0;
+    }
+    
+    // Create default env.stars
+    std::string content = R"($ENV.Version = "3"
+
+# $ENV.System - optional, uncomment if you want to manage hostname/timezone
+# $ENV.System: {
+#     hostname = "my-machine"
+#     timezone = "UTC"
+# };
+
+$ENV.Packages: {
+    # Add system packages here, e.g.:
+    # neovim
+    # git
+    # htop
+};
+
+# $ENV.Services - optional, format: service = "enabled" | "disabled" | "masked"
+# $ENV.Services: {
+#     sshd = "enabled"
+# };
+)";
+    
+    std::ofstream f(env_path);
+    f << content;
+    // Set file permissions: rw-rw-r-- (664) - owner and group can read/write
+    std::filesystem::permissions(env_path, 
+        std::filesystem::perms::owner_all | 
+        std::filesystem::perms::group_read | 
+        std::filesystem::perms::group_write | 
+        std::filesystem::perms::others_read);
+    std::cout << "Created " << env_path << "\n";
+    
+    // Also create the dotfiles subdirectory with group write permissions
+    auto dotfiles_dir = env_dir / "dotfiles";
+    if (!std::filesystem::exists(dotfiles_dir)) {
+        std::filesystem::create_directories(dotfiles_dir);
+        std::filesystem::permissions(dotfiles_dir, 
+            std::filesystem::perms::owner_all | 
+            std::filesystem::perms::group_all | 
+            std::filesystem::perms::others_exec |
+            std::filesystem::perms::others_read);
+        std::cout << "Created " << dotfiles_dir << "\n";
+    }
+    
+    return 0;
+}
+
+int cmd_system_init_user(const std::vector<std::string>& args) {
+    // Get the username - either from argument or from environment
+    std::string username;
+    
+    if (!args.empty()) {
+        username = args[0];
+    } else {
+        // Try to get username from environment
+        const char* user = std::getenv("USER");
+        if (!user) {
+            user = std::getenv("USERNAME");
+        }
+        if (!user) {
+            // Try to get from whoami
+            auto result = util::run("whoami", {});
+            username = result.stdout_output;
+            if (!username.empty() && username.back() == '\n') {
+                username.pop_back();
+            }
+        } else {
+            username = user;
+        }
+    }
+    
+    if (username.empty()) {
+        std::cerr << "Error: Could not determine username. Please specify as argument.\n";
+        return 1;
+    }
+    
+    auto env_dir = std::filesystem::path("/etc/astral/env");
+    auto user_path = env_dir / (username + ".stars");
+    
+    // Ensure env directory exists
+    if (!std::filesystem::exists(env_dir)) {
+        std::filesystem::create_directories(env_dir);
+        std::filesystem::permissions(env_dir, 
+            std::filesystem::perms::owner_all | 
+            std::filesystem::perms::group_all | 
+            std::filesystem::perms::others_exec |
+            std::filesystem::perms::others_read |
+            std::filesystem::perms::set_gid,
+            std::filesystem::perm_options::replace);
+        std::cout << "Created " << env_dir << "\n";
+    }
+    
+    if (std::filesystem::exists(user_path)) {
+        std::cout << user_path << " already exists, not overwriting.\n";
+        return 0;
+    }
+    
+    // Create user-specific config
+    std::string content = R"($ENV.Version = "3"
+
+$ENV.User: {
+    name = ")" + username + R"(
+    shell = "/bin/bash"
+    # groups = "wheel audio video"  # optional, space-separated
+};
+
+# $ENV.Packages - user-specific packages (installed via Astral)
+# $ENV.Packages: {
+#     firefox
+#     thunderbird
+# };
+
+# $ENV.Dotfiles - symlink dotfiles from /etc/astral/env/dotfiles/<user>/
+# Format: "/home/)" + username + R"(/.bashrc" = "bashrc"
+# $ENV.Dotfiles: {
+#     "/home/)" + username + R"(/.bashrc" = "bashrc"
+#     "/home/)" + username + R"(/.gitconfig" = "gitconfig"
+# };
+
+# $ENV.Vars - environment variables for this user
+# $ENV.Vars: {
+#     EDITOR = "vim"
+#     BROWSER = "firefox"
+# };
+)";
+    
+    std::ofstream f(user_path);
+    f << content;
+    
+    // Set ownership to the user and permissions 664
+    // Get uid/gid for the user
+    auto result = util::run("id", {username});
+    if (result.exit_code == 0) {
+        // Parse uid/gid from id command output
+        std::string output = result.stdout_output;
+        size_t uid_pos = output.find("uid=");
+        size_t gid_pos = output.find("gid=");
+        if (uid_pos != std::string::npos && gid_pos != std::string::npos) {
+            std::string uid_str = output.substr(uid_pos + 4);
+            std::string gid_str = output.substr(gid_pos + 4);
+            
+            // Extract numbers
+            uid_str = uid_str.substr(0, uid_str.find('('));
+            gid_str = gid_str.substr(0, gid_str.find('('));
+            
+            // Change ownership
+            auto chown_result = util::run("chown", {username + ":" + username, user_path.string()});
+            (void)chown_result;  // Ignore errors - might not have permission
+        }
+    }
+    
+    // Set permissions: rw-rw-r-- (664)
+    std::filesystem::permissions(user_path, 
+        std::filesystem::perms::owner_all | 
+        std::filesystem::perms::group_read | 
+        std::filesystem::perms::group_write | 
+        std::filesystem::perms::others_read);
+    
+    std::cout << "Created " << user_path << "\n";
+    
+    // Also create user's dotfiles directory
+    auto dotfiles_user_dir = env_dir / "dotfiles" / username;
+    if (!std::filesystem::exists(dotfiles_user_dir)) {
+        std::filesystem::create_directories(dotfiles_user_dir);
+        // Try to set ownership
+        auto chown_result = util::run("chown", {username + ":" + username, dotfiles_user_dir.string()});
+        (void)chown_result;
+        std::filesystem::permissions(dotfiles_user_dir, 
+            std::filesystem::perms::owner_all | 
+            std::filesystem::perms::group_all | 
+            std::filesystem::perms::others_exec |
+            std::filesystem::perms::others_read);
+        std::cout << "Created " << dotfiles_user_dir << "\n";
+    }
+    
+    std::cout << "\nUser configuration created for '" << username << "'.\n";
+    std::cout << "Edit " << user_path << " to add packages, dotfiles, and variables.\n";
+    
+    return 0;
+}
+
+int cmd_system_check(const std::vector<std::string>&) {
+    auto env_dir = std::filesystem::path("/etc/astral/env");
+    
+    if (!std::filesystem::exists(env_dir)) {
+        std::cout << "No env directory found.\n";
+        return 0;
+    }
+    
+    int errors = 0;
+    
+    for (const auto& entry : std::filesystem::directory_iterator(env_dir)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".stars") {
+            continue;
+        }
+        
+        try {
+            // FIX: Actually parse the file to validate it, not just check if it opens
+            auto filename = entry.path().filename().string();
+            
+            if (filename == "env.stars") {
+                // Try to parse as system config
+                auto config = astral_sys::parse_system_config(entry.path());
+                std::cout << "✓ " << filename << " — valid\n";
+            } else {
+                // Try to parse as user config
+                auto config = astral_sys::parse_user_config(entry.path());
+                std::cout << "✓ " << filename << " — valid\n";
+            }
+        } catch (const std::exception& e) {
+            std::cout << "✗ " << entry.path().filename().string() 
+                      << " — ERROR: " << e.what() << "\n";
+            errors++;
+        }
+    }
+    
+    if (errors > 0) {
+        std::cout << "\n" << errors << " error(s) found.\n";
+        return 1;
+    }
+    
+    std::cout << "\nAll config files are valid.\n";
+    return 0;
+}
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        print_help(argv[0]);
+        return 1;
+    }
+    
+    // Check for global flags FIRST (they can come before or after command)
+    std::string cmd;
+    std::vector<std::string> args;
+    
+    // First pass: check if first arg is a global flag
+    if (argv[1][0] == '-' && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 ||
+                                 strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0)) {
+        // Handle global-only flags
+        if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
+            print_version();
+            return 0;
+        }
+        if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+            print_help(argv[0]);
+            return 0;
+        }
+    }
+    
+    // First arg is the command
+    cmd = argv[1];
+    
+    // Parse remaining arguments
+    for (int i = 2; i < argc; i++) {
+        args.push_back(argv[i]);
+        
+        // Also check remaining args for global flags
+        if (strcmp(argv[i], "-V") == 0 || strcmp(argv[i], "--version") == 0) {
+            print_version();
+            return 0;
+        }
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_help(argv[0]);
+            return 0;
+        }
+    }
+    
+    // Load config for enabled check
+    auto cfg = config::load();
+    
+    // Commands that don't require enabled check
+    if (cmd == "init") {
+        return cmd_init(args);
+    }
+    
+    if (!cfg.env_enabled) {
+        std::cerr << "ERROR: astral-env is not enabled.\n";
+        std::cerr << "       Set 'astral-env = \"enabled\"' in $AST.core in /etc/astral/astral.stars\n";
+        return 1;
+    }
+    
+    // Dispatch commands
+    if (cmd == "lock") {
+        return cmd_lock(args);
+    } else if (cmd == "build") {
+        return cmd_build(args);
+    } else if (cmd == "shell") {
+        return cmd_shell(args);
+    } else if (cmd == "run") {
+        return cmd_run(args);
+    } else if (cmd == "status") {
+        return cmd_status(args);
+    } else if (cmd == "gc") {
+        return cmd_gc(args);
+    } else if (cmd == "snap") {
+        if (args.empty()) {
+            std::cerr << "Usage: astral-env snap <path>  |  snap list [path]  |  snap restore <id>  |  snap prune\n";
+            return 1;
+        }
+        const std::string& sub = args[0];
+        if (sub == "list") {
+            return cmd_snap_list({args.begin() + 1, args.end()});
+        } else if (sub == "restore") {
+            return cmd_snap_restore({args.begin() + 1, args.end()});
+        } else if (sub == "prune") {
+            return cmd_snap_prune({args.begin() + 1, args.end()});
+        } else if (sub.front() == '/' || sub.front() == '.' || std::filesystem::exists(sub)) {
+            // Explicit path — snapshot it
+            return cmd_snap(args);
+        } else {
+            std::cerr << "Unknown snap subcommand: " << sub << "\n";
+            std::cerr << "Usage: astral-env snap <path>  |  snap list [path]  |  snap restore <id>  |  snap prune\n";
+            return 1;
+        }
+    } else if (cmd == "store") {
+        if (args.empty()) {
+            std::cerr << "Error: specify store subcommand\n";
+            return 1;
+        }
+        if (args[0] == "list") {
+            return cmd_store_list({args.begin() + 1, args.end()});
+        } else if (args[0] == "size") {
+            return cmd_store_size({args.begin() + 1, args.end()});
+        }
+    } else if (cmd == "system") {
+        if (args.empty()) {
+            std::cerr << "Error: specify system subcommand\n";
+            return 1;
+        }
+        
+        // system init doesn't require enabled flag
+        if (args[0] == "init") {
+            return cmd_system_init({args.begin() + 1, args.end()});
+        }
+        // system init-user doesn't require enabled flag (creates user config file)
+        if (args[0] == "init-user") {
+            return cmd_system_init_user({args.begin() + 1, args.end()});
+        }
+        
+        // Check system enabled for other commands
+        if (!cfg.system_enabled) {
+            std::cerr << "ERROR: astral-env-system is not enabled.\n";
+            std::cerr << "       Set 'astral-env-system = \"enabled\"' in $AST.core in /etc/astral/astral.stars\n";
+            return 1;
+        }
+        
+        if (args[0] == "diff") {
+            return cmd_system_diff({args.begin() + 1, args.end()});
+        } else if (args[0] == "apply") {
+            return cmd_system_apply({args.begin() + 1, args.end()});
+        } else if (args[0] == "rollback") {
+            return cmd_system_rollback({args.begin() + 1, args.end()});
+        } else if (args[0] == "check") {
+            return cmd_system_check({args.begin() + 1, args.end()});
+        }
+    }
+    
+    std::cerr << "Unknown command: " << cmd << "\n";
+    print_help(argv[0]);
+    return 1;
+}
