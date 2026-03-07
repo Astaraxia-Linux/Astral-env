@@ -79,7 +79,7 @@ set(ALL_SOURCES
 add_executable(astral-env ${ALL_SOURCES})
 
 # Include directories
-target_include_directories(astral-env PRIVATE src)
+target_include_directories(astral-env PRIVATE .)
 
 # Link libraries
 target_link_libraries(astral-env PRIVATE CURL::libcurl OpenSSL::SSL OpenSSL::Crypto)
