@@ -30,7 +30,7 @@ Maintained by: Same One Maniac™ (still just one)
 
 ### What is astral-env?
 
-astral-env is the declarative environment and system configuration layer for Astaraxia Linux. It sits on top of Astral and lets you describe your entire system — packages, services, dotfiles, hostname, timezone, file snapshots — in a single `.stars` file. Then it makes reality match the file.
+astral-env is the declarative environment and system configuration layer for Astaraxia Linux. It sits on top of Astral and lets you describe your entire system packages, services, dotfiles, hostname, timezone, file snapshots in a single `.stars` file. Then it makes reality match the file.
 
 Think of it as:
 - **Nix** without the functional language that makes your brain hurt
@@ -64,7 +64,7 @@ Think of it as:
 - A C++20 compiler (`gcc` or `clang`)
 - `cmake` >= 3.20
 - `openssl` >= 3.0 (for SHA-256 store hashing)
-- `zstd` (for file snapshots — `astral -S zstd`)
+- `zstd` (for file snapshots `astral -S zstd`)
 - The will to live
 
 ### Building from Source
@@ -83,8 +83,8 @@ sudo cmake --install build
 ```
 
 This installs:
-- `/usr/bin/astral-env` — the main binary
-- `/usr/bin/astral-env-snapd` — the snapshot daemon
+- `/usr/bin/astral-env` the main binary
+- `/usr/bin/astral-env-snapd` the snapshot daemon
 
 ### First-time Setup
 
@@ -109,7 +109,7 @@ $AST.core: {
 
 ## Configuration Format
 
-astral-env uses `.stars` files — the same syntax as Astral recipes. If you've written a recipe, you already know this.
+astral-env uses `.stars` files the same syntax as Astral recipes. If you've written a recipe, you already know this.
 
 ### astral-env.stars (Project Environments)
 
@@ -219,7 +219,7 @@ $ENV.Snap: {
 };
 ```
 
-`autosave` uses inotify (Linux) to detect changes and snapshot immediately. Everything else is timer-based. The snapshot daemon handles this — see [Daemon & Auto-snapshots](#daemon--auto-snapshots).
+`autosave` uses inotify (Linux) to detect changes and snapshot immediately. Everything else is timer-based. The snapshot daemon handles this see [Daemon & Auto-snapshots](#daemon--auto-snapshots).
 
 ---
 
@@ -279,7 +279,7 @@ Packages live in the content-addressed store:
     ...
 ```
 
-Multiple projects can share the same store — if two projects need the same version of Python, it's stored once. The GC knows which entries are still referenced.
+Multiple projects can share the same store if two projects need the same version of Python, it's stored once. The GC knows which entries are still referenced.
 
 ---
 
@@ -340,7 +340,7 @@ sudo astral-env system apply --user izumi
 
 astral-env automatically saves a rollback snapshot before applying anything. You're welcome.
 
-Package installs use `astral --parallel-build` when there are multiple packages — so your 47 packages install in parallel instead of one at a time. Coffee break may no longer be required.
+Package installs use `astral --parallel-build` when there are multiple packages so your 47 packages install in parallel instead of one at a time. Coffee break may no longer be required.
 
 ### Rolling Back
 
@@ -419,7 +419,7 @@ Snapshots are stored content-addressed under `/astral-env/store/snap/`:
 
 **Deduplication**: If you snapshot the same file twice and it hasn't changed, the second snapshot reuses the existing blob. Storage costs nothing.
 
-**Reasons**: Snapshots are tagged with how they were created — `manual`, `pre-apply`, `scheduled`, or `autosave`. Useful for knowing why a snapshot exists when you're digging through the list at 2am.
+**Reasons**: Snapshots are tagged with how they were created `manual`, `pre-apply`, `scheduled`, or `autosave`. Useful for knowing why a snapshot exists when you're digging through the list at 2am.
 
 ### Pruning
 
@@ -434,7 +434,7 @@ astral-env snap prune --older-than 14d
 astral-env snap prune
 ```
 
-The GC knows about snapshots — it will never collect a blob that's referenced by a snapshot index entry. Prune first if you want to free space.
+The GC knows about snapshots it will never collect a blob that's referenced by a snapshot index entry. Prune first if you want to free space.
 
 ---
 
@@ -644,11 +644,11 @@ Rollback restores services, symlinks, hostname, and timezone. It cannot restore:
 
 ### Why C++ instead of POSIX sh like Astral?
 
-Astral gets away with sh because package operations are naturally sequential and shelling out to `tar`, `make`, etc. is fine. astral-env needs concurrent file hashing, inotify event loops, content-addressed storage, and a proper GC — doing that in sh would be a crime against humanity. C++20 with `std::filesystem` hits the sweet spot.
+Astral gets away with sh because package operations are naturally sequential and shelling out to `tar`, `make`, etc. is fine. astral-env needs concurrent file hashing, inotify event loops, content-addressed storage, and a proper GC doing that in sh would be a crime against humanity. C++20 with `std::filesystem` hits the sweet spot.
 
 ### Does astral-env replace Astral?
 
-No. astral-env is a layer on top of Astral. It uses `astral -S` to install packages — it doesn't reimplement the package manager.
+No. astral-env is a layer on top of Astral. It uses `astral -S` to install packages it doesn't reimplement the package manager.
 
 ### Can I use astral-env without system management?
 
@@ -675,7 +675,7 @@ Absolutely yes. That's the whole point. Put your `.stars` files and `/etc/astral
 
 dotfiles managers (chezmoi, stow, etc.) only handle dotfiles. astral-env handles dotfiles *and* packages *and* services *and* system settings *and* snapshots, all in one declarative file. It's more opinionated but covers more ground.
 
-### Snapshot deduplication — how much space does it actually save?
+### Snapshot deduplication how much space does it actually save?
 
 Depends entirely on how often your files change. If you're snapshotting your neovim config hourly and only editing it once a day, 23 of those 24 snapshots are free (zero bytes). If you're snapshotting a directory that changes every hour, you're paying full price each time. `astral-env store size` will tell you the truth.
 
@@ -702,7 +702,7 @@ GPL-3.0, same as Astral. Because consistency.
 ## Final Notes
 
 > *"astral-env: because your system configuration shouldn't live in your head"*  
-> — Also nobody, ever
+> Also nobody, ever
 
 astral-env is young and opinionated. The store format is stable. The `.stars` syntax is stable. Everything else might change. Pin your versions.
 
