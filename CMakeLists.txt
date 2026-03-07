@@ -14,51 +14,51 @@ find_package(OpenSSL REQUIRED)
 
 # Source files
 set(UTIL_SOURCES
-    src/util/tempdir.cpp
-    src/util/tempfile.cpp
-    src/util/process.cpp
-    src/util/file.cpp
+    util/tempdir.cpp
+    util/tempfile.cpp
+    util/process.cpp
+    util/file.cpp
 )
 
 set(CONFIG_SOURCES
-    src/config/conf.cpp
+    config/conf.cpp
 )
 
 set(STORE_SOURCES
-    src/store/store.cpp
-    src/store/entry.cpp
+    store/store.cpp
+    store/entry.cpp
 )
 
 set(FETCH_SOURCES
-    src/fetch/fetcher.cpp
+    fetch/fetcher.cpp
 )
 
 set(REPO_SOURCES
-    src/repo/bin_repo.cpp
+    repo/bin_repo.cpp
 )
 
 set(LOCK_SOURCES
-    src/lock/resolver.cpp
-    src/lock/lockfile.cpp
+    lock/resolver.cpp
+    lock/lockfile.cpp
 )
 
 set(ENV_SOURCES
-    src/env/activation.cpp
-    src/env/shell.cpp
+    env/activation.cpp
+    env/shell.cpp
 )
 
 set(SYSTEM_SOURCES
-    src/system/system_conf.cpp
-    src/system/differ.cpp
-    src/system/applier.cpp
+    system/system_conf.cpp
+    system/differ.cpp
+    system/applier.cpp
 )
 
 set(GC_SOURCES
-    src/gc/gc.cpp
+    gc/gc.cpp
 )
 
 set(SNAP_SOURCES
-    src/snap/snap.cpp
+    snap/snap.cpp
 )
 
 set(ALL_SOURCES
@@ -72,7 +72,7 @@ set(ALL_SOURCES
     ${SYSTEM_SOURCES}
     ${GC_SOURCES}
     ${SNAP_SOURCES}
-    src/main.cpp
+    main.cpp
 )
 
 # Create the executable
