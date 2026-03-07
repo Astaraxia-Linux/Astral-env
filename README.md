@@ -61,8 +61,10 @@ Think of it as:
 ### Prerequisites
 
 - Astaraxia AZURE (Astral 5.0.0.0+ obviously)
-- A C++20 compiler (`gcc` or `clang`)
-- `cmake` >= 3.20
+- A C++23 compiler (`gcc` or `clang`)
+- `make`
+- `pkg-config`
+- `libcurl` >= 8.0
 - `openssl` >= 3.0 (for SHA-256 store hashing)
 - `zstd` (for file snapshots `astral -S zstd`)
 - The will to live
@@ -75,11 +77,10 @@ git clone https://github.com/Astaraxia-Linux/Astral-env
 cd Astral-env
 
 # Build
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j$(nproc)
+make -j
 
 # Install
-sudo cmake --install build
+sudo make install
 ```
 
 This installs:
