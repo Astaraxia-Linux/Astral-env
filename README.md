@@ -60,7 +60,7 @@ Think of it as:
 
 ### Prerequisites
 
-- Astral 5.0.0.0+ (obviously)
+- Astaraxia AZURE (Astral 5.0.0.0+ obviously)
 - A C++20 compiler (`gcc` or `clang`)
 - `cmake` >= 3.20
 - `openssl` >= 3.0 (for SHA-256 store hashing)
