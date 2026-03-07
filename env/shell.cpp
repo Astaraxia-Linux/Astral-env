@@ -120,15 +120,17 @@ void enter_shell(
     std::string shell_name = shell_path.filename().string();
     std::vector<std::string> exec_args;
     std::vector<std::pair<std::string, std::string>> env_additions;
-    
-    if (shell_name == "bash" || shell_name == "zsh") {
+
+    if (shell_name == "bash") {
         // Use --rcfile for interactive shells
         exec_args = {"--rcfile", script_path.string()};
+    } else if (shell_name == "zsh") {
+        exec_args = {"--rcs", script_path.string()};
     } else {
         // For other shells (sh, dash), use ENV variable (POSIX)
         env_additions = {{"ENV", script_path.string()}};
     }
-    
+
     // Execute the user's shell with the activation script
     util::exec_replace(shell_path, exec_args, env_additions);
 }
