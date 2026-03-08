@@ -21,10 +21,10 @@ enum class InstallError {
 // Use LockEntry and BuildKind from lock/lockfile.hpp
 using LockEntry = lock::LockEntry;
 
-// Install a lock entry to the store.
-// Idempotent — skips if store_path/.complete exists and checksum matches.
-// Returns Err on checksum failure or build failure.
-// Throws std::runtime_error on unrecoverable disk error.
+// Install a lock entry.
+//   Source / Prebuilt  → downloaded and installed into content-addressed store
+//   AstralSource       → delegated to `astral -S <pkg>` (installs to host /usr)
+// Idempotent: skips store entries whose .complete marker already exists (unless force=true).
 std::expected<void, InstallError> install(
     const LockEntry& entry,
     const std::filesystem::path& store_root,
@@ -32,20 +32,25 @@ std::expected<void, InstallError> install(
     bool force = false
 );
 
-// Install a pre-built tarball entry
+// Install a pre-built tarball entry into the store
 std::expected<void, InstallError> install_prebuilt(
     const LockEntry& entry,
     const std::filesystem::path& store_path
 );
 
-// Install a source-built entry (runs $ENV.Build)
+// Build from source tarball into the store
 std::expected<void, InstallError> install_source(
     const LockEntry& entry,
     const std::filesystem::path& store_path,
     int max_jobs
 );
 
-// List all store entries
+// Delegate install to astral -S (for AstralSource entries)
+std::expected<void, InstallError> install_via_astral(
+    const LockEntry& entry
+);
+
+// List all complete store entries
 std::vector<std::filesystem::path> list_store_entries(const std::filesystem::path& store_root);
 
 // Get total store size in bytes
