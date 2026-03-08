@@ -131,7 +131,7 @@ AstralEnvConfig load(const std::filesystem::path& conf_path) {
 }
 
 std::string version() {
-    return "1.0.0.0";
+    return "1.1.0.0";
 }
 
 } // namespace config
