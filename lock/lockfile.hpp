@@ -8,21 +8,25 @@
 
 namespace lock {
 
-// Build kind: how the package was built
+// How the package was / will be obtained
 enum class BuildKind {
-    Source,    // built from source via $ENV.Build
-    Prebuilt,  // pre-built binary tarball
-    System,    // installed via astral -S into /usr (not in store)
+    Source,       // Built from source tarball via build_script in bin/ entry
+                  // → installed into content-addressed store
+    Prebuilt,     // Pre-built binary tarball from bin/ entry (no build_script)
+                  // → extracted into content-addressed store
+    AstralSource, // Not in bin/ repo — fetched via astral's recipe system at build time
+                  // → astral -S <pkg> installs to host system, not the store
+                  // Use <pkg>-bin to get a store-isolated prebuilt instead.
 };
 
 struct LockEntry {
     std::string name;
-    std::string version;
-    std::string url;
-    std::string checksum;
-    std::filesystem::path store_path;
-    BuildKind build_kind;  // replaced source_built bool with enum
-    std::optional<std::string> build_script;  // for custom build commands
+    std::string version;   // empty for AstralSource with unconstrained version
+    std::string url;       // empty for AstralSource
+    std::string checksum;  // empty for AstralSource
+    std::filesystem::path store_path; // empty for AstralSource
+    BuildKind build_kind;
+    std::optional<std::string> build_script; // Source builds only
 };
 
 struct Lockfile {
@@ -31,14 +35,19 @@ struct Lockfile {
     std::string astral_env_version;
 };
 
-// Read a lockfile
+// Read a lockfile from disk
 Lockfile read(const std::filesystem::path& lock_path);
 
-// Write a lockfile
+// Write a lockfile to disk
 void write(const Lockfile& lock, const std::filesystem::path& lock_path);
 
-// Generate a lockfile from an astral-env.stars file
-// Resolves version constraints against the /bin repo
+// Generate a lockfile from an astral-env.stars file.
+//
+// Resolution rules applied per package name:
+//   <pkg>      → AstralSource: astral -S at build time (default, source build)
+//   <pkg>-bin  → BinRepo: must exist in AOHARU bin/ (prebuilt or source recipe)
+//
+// Throws std::runtime_error if a -bin request can't be satisfied.
 Lockfile generate(
     const std::filesystem::path& stars_path,
     const std::filesystem::path& repo_bin_dir,
