@@ -239,13 +239,13 @@ int cmd_status(const std::vector<std::string>&) {
         std::cout << "  [";
         
         // FIX: Check build_kind first - system installs don't go to store
-        if (entry.build_kind == lock::BuildKind::System) {
+        if (entry.build_kind == lock::BuildKind::AstralSource) {
             // System packages are installed via astral -S, not the store
             std::cout << "✓] " << entry.name;
             if (!entry.version.empty()) {
                 std::cout << " " << entry.version;
             }
-            std::cout << " (system install via astral)\n";
+            std::cout << " (astral source build, installed to host)\n";
         } else {
             bool present = store::entry_exists(entry.store_path);
             std::cout << (present ? "✓" : "✗") << "] " << entry.name << " " << entry.version;
