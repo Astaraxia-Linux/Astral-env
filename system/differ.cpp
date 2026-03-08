@@ -12,7 +12,7 @@ namespace {
 
 // Check if a package is installed (using pacman directly since astral doesn't have -Q)
 bool is_package_installed(const std::string& package) {
-    auto result = util::run("/usr/bin/pacman", {"-Q", package});
+    auto result = util::run("pacman", {"-Q", package});
     return result.exit_code == 0;
 }
 

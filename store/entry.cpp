@@ -181,7 +181,7 @@ std::expected<void, InstallError> install_source(
             pos += store_path.string().length();
         }
         // Execute the build script via /bin/sh
-        result = util::run("/bin/sh", {"-c", script}, source_dir, env);
+        result = util::run("sh", {"-c", script}, source_dir, env);
         if (result.exit_code != 0) {
             std::cerr << "Build failed: " << result.stderr_output << "\n";
             return std::unexpected(InstallError::BuildFailed);
@@ -240,7 +240,7 @@ std::expected<void, InstallError> install_system(
     // Install via "astral -S" instead of to the store
     std::cout << "Installing " << entry.name << " " << entry.version << " via astral...\n";
     
-    auto result = util::run("/usr/bin/astral", {"-y", "-S", entry.name});
+    auto result = util::run("astral", {"-y", "-S", entry.name});
     if (result.exit_code != 0) {
         std::cerr << "Failed to install via astral: " << result.stderr_output << "\n";
         return std::unexpected(InstallError::BuildFailed);
