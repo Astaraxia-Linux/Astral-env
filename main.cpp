@@ -16,6 +16,14 @@
 #include <optional>
 #include <cstring>
 #include <fstream>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
+// Extern declaration for the daemon main function
+extern "C" void run_daemon();
 
 namespace {
 
@@ -239,13 +247,13 @@ int cmd_status(const std::vector<std::string>&) {
         std::cout << "  [";
         
         // FIX: Check build_kind first - system installs don't go to store
-        if (entry.build_kind == lock::BuildKind::AstralSource) {
+        if (entry.build_kind == lock::BuildKind::System) {
             // System packages are installed via astral -S, not the store
             std::cout << "✓] " << entry.name;
             if (!entry.version.empty()) {
                 std::cout << " " << entry.version;
             }
-            std::cout << " (astral source build, installed to host)\n";
+            std::cout << " (system install via astral)\n";
         } else {
             bool present = store::entry_exists(entry.store_path);
             std::cout << (present ? "✓" : "✗") << "] " << entry.name << " " << entry.version;
@@ -903,9 +911,103 @@ int cmd_system_check(const std::vector<std::string>&) {
     return 0;
 }
 
+int cmd_snapd_start(const std::vector<std::string>&) {
+    // Check if already running
+    auto result = util::run("pidof", {"astral-env-snapd"});
+    if (result.exit_code == 0 && !result.stdout_output.empty()) {
+        std::cerr << "Error: astral-env-snapd is already running (PID: " << result.stdout_output << ")\n";
+        return 1;
+    }
+    
+    // Fork and run the daemon
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "Error: fork failed\n";
+        return 1;
+    }
+    if (pid == 0) {
+        // Child process: run the daemon
+        // Close standard file descriptors
+        close(STDIN_FILENO);
+        close(STDOUT_FILENO);
+        close(STDERR_FILENO);
+        
+        // Open /dev/null for stdin
+        open("/dev/null", O_RDONLY);
+        // Redirect stdout and stderr to a log file
+        int log_fd = open("/var/log/astral-env-snapd.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (log_fd >= 0) {
+            dup2(log_fd, STDOUT_FILENO);
+            dup2(log_fd, STDERR_FILENO);
+            close(log_fd);
+        }
+        
+        execlp("astral-env-snapd", "astral-env-snapd", nullptr);
+        _exit(1);
+    }
+    
+    // Parent process
+    std::cout << "Started astral-env-snapd (PID: " << pid << ")\n";
+    return 0;
+}
+
+int cmd_snapd_stop(const std::vector<std::string>&) {
+    auto result = util::run("pidof", {"astral-env-snapd"});
+    if (result.exit_code != 0 || result.stdout_output.empty()) {
+        std::cerr << "Error: astral-env-snapd is not running\n";
+        return 1;
+    }
+    
+    // Extract PID
+    std::string pid_str = result.stdout_output;
+    // Take first PID if multiple
+    size_t space = pid_str.find(' ');
+    if (space != std::string::npos) {
+        pid_str = pid_str.substr(0, space);
+    }
+    
+    // Send SIGTERM
+    int pid = std::stoi(pid_str);
+    if (kill(pid, SIGTERM) != 0) {
+        std::cerr << "Error: failed to stop daemon\n";
+        return 1;
+    }
+    
+    std::cout << "Stopped astral-env-snapd (PID: " << pid << ")\n";
+    return 0;
+}
+
+int cmd_snapd_restart(const std::vector<std::string>&) {
+    cmd_snapd_stop({});
+    return cmd_snapd_start({});
+}
+
+int cmd_snapd_status(const std::vector<std::string>&) {
+    auto result = util::run("pidof", {"astral-env-snapd"});
+    if (result.exit_code == 0 && !result.stdout_output.empty()) {
+        std::cout << "astral-env-snapd is running (PID: " << result.stdout_output << ")\n";
+    } else {
+        std::cout << "astral-env-snapd is not running\n";
+    }
+    return 0;
+}
+
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
+    // Check if we are the snapd binary
+    std::string prog_name = argv[0];
+    size_t pos = prog_name.rfind('/');
+    if (pos != std::string::npos) {
+        prog_name = prog_name.substr(pos + 1);
+    }
+    
+    if (prog_name == "astral-env-snapd") {
+        // Run the daemon directly
+        run_daemon();
+        return 0;
+    }
+    
     if (argc < 2) {
         print_help(argv[0]);
         return 1;
@@ -1034,6 +1136,19 @@ int main(int argc, char* argv[]) {
             return cmd_system_rollback({args.begin() + 1, args.end()});
         } else if (args[0] == "check") {
             return cmd_system_check({args.begin() + 1, args.end()});
+        }
+    } else if (cmd == "snapd") {
+        if (args.empty()) {
+            std::cerr << "Error: specify snapd subcommand\n";
+            return 1;
+        }
+        if (args[0] == "start") return cmd_snapd_start({args.begin() + 1, args.end()});
+        else if (args[0] == "stop") return cmd_snapd_stop({args.begin() + 1, args.end()});
+        else if (args[0] == "restart") return cmd_snapd_restart({args.begin() + 1, args.end()});
+        else if (args[0] == "status") return cmd_snapd_status({args.begin() + 1, args.end()});
+        else {
+            std::cerr << "Unknown snapd subcommand: " << args[0] << "\n";
+            return 1;
         }
     }
     
