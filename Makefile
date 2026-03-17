@@ -2,6 +2,7 @@
 
 BUILD_DIR := .build
 OUT := astral-env
+SNAPD := astral-env-snapd
 
 CXX = g++
 
@@ -21,18 +22,25 @@ SRC := $(shell find . -name "*.cpp")
 vpath %.cpp $(VPATH)
 
 OBJ := $(SRC:%.cpp=$(BUILD_DIR)/%.o)
+MAIN_OBJ := $(filter-out $(BUILD_DIR)/snapd/snapd.o, $(OBJ))
+SNAPD_OBJ := $(filter-out $(BUILD_DIR)/main.o, $(OBJ))
 
 .PHONY: all
-all: $(OUT)
+all: $(OUT) $(SNAPD)
 
 $(BUILD_DIR)/%.o: %.cpp
 	@ mkdir -p $(dir $@)
 	$Q $(CXX) $(CXXFLAGS) -o $@ -c $<
 	@ $(LOG_TIME) "CXX $(C_PURPLE) $(notdir $@) $(C_RESET)"
 
-$(OUT): $(OBJ)
+$(OUT): $(filter-out $(BUILD_DIR)/snapd/snapd.o, $(OBJ))
 	@ mkdir -p $(dir $@)
-	$Q $(CXX) -o $@ $(OBJ) $(CXXFLAGS) $(LDLIBS) $(LDFLAGS)
+	$Q $(CXX) -o $@ $(filter-out $(BUILD_DIR)/snapd/snapd.o, $(OBJ)) $(CXXFLAGS) $(LDLIBS) $(LDFLAGS)
+	@ $(LOG_TIME) "LD $(C_GREEN) $@ $(C_RESET)"
+
+$(SNAPD): $(SNAPD_OBJ)
+	@ mkdir -p $(dir $@)
+	$Q $(CXX) -o $@ $(SNAPD_OBJ) $(CXXFLAGS) $(LDLIBS) $(LDFLAGS)
 	@ $(LOG_TIME) "LD $(C_GREEN) $@ $(C_RESET)"
 
 .PHONY: clean
@@ -54,6 +62,7 @@ PREFIX ?= /usr/bin
 .PHONY: install
 install:
 	install -Dm0755 $(OUT) -t $(PREFIX)
+	install -Dm0755 $(SNAPD) -t $(PREFIX)
 
 ifneq ($(shell command -v tput),)
   ifneq ($(shell tput colors),0)
