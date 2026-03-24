@@ -42,6 +42,10 @@ void parse_console(ConsoleConfig& out, const Node& n) {
     if (auto p = n.get("keyMap"); p && (*p)->is_str()) out.keymap = (*p)->str();
 }
 
+bool k_is_item(const std::string& k) {
+    return k.rfind("__item_", 0) == 0;
+}
+
 void parse_repos(PackagesConfig& out, const Node& repo_node) {
     if (!repo_node.is_map()) return;
     for (const auto& [name, v] : repo_node.map()) {
@@ -55,11 +59,6 @@ void parse_repos(PackagesConfig& out, const Node& repo_node) {
         }
         out.repos.push_back(std::move(r));
     }
-}
-
-// Returns true if key is an auto-indexed item
-bool k_is_item(const std::string& k) {
-    return k.rfind("__item_", 0) == 0;
 }
 
 void parse_fonts(FontConfig& out, const Node& n) {

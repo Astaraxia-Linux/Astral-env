@@ -407,6 +407,8 @@ bool rollback_implemented() { return true; }
 
 namespace astral_sys {
 
+std::string detect_init_sys();
+
 int apply_full(const SystemConfig& cfg,
                const std::vector<std::pair<std::string, UserConfig>>& user_configs,
                const std::vector<repo::RepoEntry>& repos,

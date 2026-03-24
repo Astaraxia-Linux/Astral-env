@@ -64,7 +64,6 @@ void take_snapshot(const SnapConfig& cfg, const std::string& reason) {
     }
 }
 
-// Reads $ENV.Snap from all .stars files in env_dir
 std::vector<std::unique_ptr<SnapConfig>> load_configs(
     const std::filesystem::path& env_dir) {
 
@@ -82,7 +81,6 @@ std::vector<std::unique_ptr<SnapConfig>> load_configs(
             if (!snap_node || !(*snap_node)->is_map()) continue;
             const Node& sn = **snap_node;
 
-            // Read default_interval if present
             if (auto p = sn.get("default_interval"); p && (*p)->is_str())
                 default_interval = (*p)->str();
 
@@ -91,7 +89,6 @@ std::vector<std::unique_ptr<SnapConfig>> load_configs(
 
             for (const auto& [pkey, pval] : (*path_node)->map()) {
                 if (pkey.rfind("__item_", 0) == 0) {
-                    // Bare path — uses default_interval
                     if (!pval.is_str()) continue;
                     auto cfg = std::make_unique<SnapConfig>();
                     cfg->path = pval.str();
@@ -101,7 +98,6 @@ std::vector<std::unique_ptr<SnapConfig>> load_configs(
                     cfg->last_snapshot    = std::chrono::system_clock::now();
                     out.push_back(std::move(cfg));
                 } else {
-                    // Named path with options block
                     auto cfg = std::make_unique<SnapConfig>();
                     cfg->path = pkey;
                     std::string interval = default_interval;
@@ -173,7 +169,7 @@ void watch_autosave(const std::vector<std::unique_ptr<SnapConfig>>& cfgs, int if
             p += sizeof(inotify_event) + ev->len;
         }
     }
-    for (auto& [wd, ] : wd_map) inotify_rm_watch(ifd, wd);
+    for (const auto& kv : wd_map) inotify_rm_watch(ifd, kv.first);
 }
 
 void daemon_main() {

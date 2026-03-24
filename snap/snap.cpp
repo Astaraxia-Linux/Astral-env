@@ -52,7 +52,6 @@ std::filesystem::path compress_path(const std::filesystem::path& source,
     } else {
         cmd = "zstd -T0 -19 -o " + archive.string() + " " + source.string();
     }
-    // Use sh, not bash — POSIX compliant
     auto r = util::run("sh", {"-c", cmd});
     if (r.exit_code != 0)
         throw std::runtime_error("compression failed: " + r.stderr_output);
@@ -216,7 +215,8 @@ int prune(const std::filesystem::path& snap_index,
     for (const auto& s : all) by_path[s.path.string()].push_back(s);
 
     auto now = std::chrono::system_clock::now();
-    for (auto& [, snaps] : by_path) {
+    for (auto& entry : by_path) {
+        const auto& snaps = entry.second;
         int kept = 0;
         for (const auto& snap : snaps) {
             bool remove = (keep_last > 0 && kept >= keep_last);

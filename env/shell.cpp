@@ -1,4 +1,5 @@
 #include "env/shell.hpp"
+#include "env/parser.hpp"
 #include "env/activation.hpp"
 #include "lock/lockfile.hpp"
 #include "util/file.hpp"
