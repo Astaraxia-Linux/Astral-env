@@ -2,220 +2,110 @@
 #include "store/store.hpp"
 #include "store/entry.hpp"
 #include "util/file.hpp"
+
 #include <iostream>
 #include <algorithm>
-#include <regex>
 #include <set>
 
 namespace gc {
 
 namespace {
 
-// Collect all blob hashes referenced by the snap index
-std::set<std::string> collect_snap_live_refs(
-    const std::filesystem::path& snap_index = "/astral-env/snapshots/files"
-) {
+std::optional<std::string> json_field(const std::string& json, const std::string& field) {
+    auto pos = json.find("\"" + field + "\"");
+    if (pos == std::string::npos) return std::nullopt;
+    auto c  = json.find(":", pos);  if (c  == std::string::npos) return std::nullopt;
+    auto q1 = json.find('"', c);   if (q1 == std::string::npos) return std::nullopt;
+    auto q2 = json.find('"', q1 + 1); if (q2 == std::string::npos) return std::nullopt;
+    return json.substr(q1 + 1, q2 - q1 - 1);
+}
+
+std::set<std::string> collect_snap_refs(
+    const std::filesystem::path& snap_index = "/astral-env/snapshots/files") {
     std::set<std::string> refs;
     if (!std::filesystem::exists(snap_index)) return refs;
-
-    for (const auto& entry : std::filesystem::directory_iterator(snap_index)) {
-        if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".json") continue;
+    for (const auto& e : std::filesystem::directory_iterator(snap_index)) {
+        if (!e.is_regular_file() || e.path().extension() != ".json") continue;
         try {
-            std::string content = util::read_file(entry.path());
-            // Extract "blob": "sha256-..." field
-            auto pos = content.find("\"blob\"");
-            if (pos == std::string::npos) continue;
-            auto q1 = content.find('"', pos + 6);
-            if (q1 == std::string::npos) continue;
-            q1 = content.find('"', q1 + 1); // skip the colon-space, find opening quote of value
-            if (q1 == std::string::npos) continue;
-            auto q2 = content.find('"', q1 + 1);
-            if (q2 == std::string::npos) continue;
-            refs.insert(content.substr(q1 + 1, q2 - q1 - 1));
+            auto content = util::read_file(e.path());
+            if (auto p = json_field(content, "blob")) refs.insert(*p);
         } catch (...) {}
     }
     return refs;
 }
 
-} // namespace
+} // anonymous namespace
 
-std::vector<std::filesystem::path> find_lockfiles(const std::filesystem::path& search_root) {
-    std::vector<std::filesystem::path> lockfiles;
-    
-    if (!std::filesystem::exists(search_root)) {
-        return lockfiles;
+std::vector<std::filesystem::path> find_lockfiles(const std::filesystem::path& root) {
+    std::vector<std::filesystem::path> out;
+    if (!std::filesystem::exists(root)) return out;
+    for (const auto& e : std::filesystem::recursive_directory_iterator(root)) {
+        if (e.is_regular_file() && e.path().filename() == "astral-env.lock")
+            out.push_back(e.path());
     }
-    
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(search_root)) {
-        if (entry.is_regular_file()) {
-            auto filename = entry.path().filename().string();
-            if (filename == "astral-env.lock") {
-                lockfiles.push_back(entry.path());
-            }
-        }
-    }
-    
-    return lockfiles;
+    return out;
 }
 
-bool is_referenced(
-    const std::filesystem::path& entry_path,
-    const std::vector<std::filesystem::path>& lockfiles
-) {
-    // Use the full store path string for unambiguous matching
-    // This avoids false positives like "gcc" matching "gcc-libs"
-    std::string entry_path_str = entry_path.string();
-    
-    for (const auto& lockfile : lockfiles) {
+bool is_referenced(const std::filesystem::path& entry_path,
+                   const std::vector<std::filesystem::path>& lockfiles) {
+    std::string ep = entry_path.string();
+    for (const auto& lf : lockfiles) {
         try {
-            std::string content = util::read_file(lockfile);
-            
-            // Search for the full store path ( unambiguous)
-            if (content.find(entry_path_str) != std::string::npos) {
-                return true;
-            }
-        } catch (...) {
-            // Skip unreadable lockfiles
-        }
+            if (util::read_file(lf).find(ep) != std::string::npos) return true;
+        } catch (...) {}
     }
-    
     return false;
-}
-
-std::vector<GcEntry> find_candidates(
-    const std::filesystem::path& store_root,
-    const std::filesystem::path& search_root,
-    int gc_keep_days
-) {
-    std::vector<GcEntry> candidates;
-    
-    if (!std::filesystem::exists(store_root)) {
-        return candidates;
-    }
-    
-    // Collect lockfiles first - this is critical for safety
-    auto lockfiles = find_lockfiles(search_root);
-
-    // Protect snap blobs from GC
-    auto snap_refs = collect_snap_live_refs();
-
-    auto now = std::chrono::system_clock::now();
-    auto cutoff = now - std::chrono::days(gc_keep_days);
-    
-    // Find all store entries
-    for (const auto& entry : std::filesystem::directory_iterator(store_root)) {
-        if (!entry.is_directory()) continue;
-        
-        auto entry_path = entry.path();
-
-        // Skip the snap/ subdirectory entirely — snap GC is handled separately
-        if (entry_path.filename() == "snap") continue;
-
-        // Skip incomplete entries
-        if (!store::entry_exists(entry_path)) continue;
-        
-        // Get completion time
-        auto completion_time = store::get_completion_time(entry_path);
-        
-        // Skip entries that are too new
-        if (completion_time && *completion_time > cutoff) continue;
-        
-        // CRITICAL FIX: Skip entries that are referenced by any lockfile
-        if (is_referenced(entry_path, lockfiles)) continue;
-        
-        // Calculate size
-        uint64_t size = 0;
-        for (const auto& file : std::filesystem::recursive_directory_iterator(entry_path)) {
-            if (file.is_regular_file()) {
-                size += file.file_size();
-            }
-        }
-        
-        candidates.push_back({
-            entry_path,
-            completion_time.value_or(now),
-            size
-        });
-    }
-    
-    return candidates;
 }
 
 std::vector<GcEntry> find_candidates_multi(
     const std::filesystem::path& store_root,
     const std::vector<std::filesystem::path>& lockfiles,
-    int gc_keep_days
-) {
-    std::vector<GcEntry> candidates;
-    
-    if (!std::filesystem::exists(store_root)) {
-        return candidates;
-    }
-    
-    auto now = std::chrono::system_clock::now();
+    int gc_keep_days) {
+    std::vector<GcEntry> out;
+    if (!std::filesystem::exists(store_root)) return out;
+
+    auto snap_refs = collect_snap_refs();
+    auto now    = std::chrono::system_clock::now();
     auto cutoff = now - std::chrono::days(gc_keep_days);
 
-    // Protect snap blobs from GC
-    auto snap_refs = collect_snap_live_refs();
-    
-    // Find all store entries
-    for (const auto& entry : std::filesystem::directory_iterator(store_root)) {
-        if (!entry.is_directory()) continue;
-        
-        auto entry_path = entry.path();
+    for (const auto& e : std::filesystem::directory_iterator(store_root)) {
+        if (!e.is_directory()) continue;
+        auto ep = e.path();
+        if (ep.filename() == "snap") continue;
+        if (snap_refs.count(ep.filename().string())) continue;
+        if (!store::entry_exists(ep)) continue;
+        auto ct = store::get_completion_time(ep);
+        if (ct && *ct > cutoff) continue;
+        if (is_referenced(ep, lockfiles)) continue;
 
-        // Skip the snap/ subdirectory entirely — snap GC is handled separately
-        if (entry_path.filename() == "snap") continue;
-
-        // Skip incomplete entries
-        if (!store::entry_exists(entry_path)) continue;
-
-        // Get completion time
-        auto completion_time = store::get_completion_time(entry_path);
-
-        // Skip entries that are too new
-        if (completion_time && *completion_time > cutoff) continue;
-
-        // Skip entries referenced by any lockfile
-        if (is_referenced(entry_path, lockfiles)) continue;
-
-        // Calculate size
-        uint64_t size = 0;
-        for (const auto& file : std::filesystem::recursive_directory_iterator(entry_path)) {
-            if (file.is_regular_file()) {
-                size += file.file_size();
-            }
-        }
-
-        candidates.push_back({
-            entry_path,
-            completion_time.value_or(now),
-            size
-        });
+        uint64_t sz = 0;
+        for (const auto& f : std::filesystem::recursive_directory_iterator(ep))
+            if (f.is_regular_file()) sz += f.file_size();
+        out.push_back({ep, ct.value_or(now), sz});
     }
-    
-    return candidates;
+    return out;
 }
 
-uint64_t collect(
+std::vector<GcEntry> find_candidates(
     const std::filesystem::path& store_root,
-    const std::vector<GcEntry>& candidates
-) {
+    const std::filesystem::path& search_root,
+    int gc_keep_days) {
+    return find_candidates_multi(store_root, find_lockfiles(search_root), gc_keep_days);
+}
+
+uint64_t collect(const std::filesystem::path&,
+                 const std::vector<GcEntry>& candidates) {
     uint64_t freed = 0;
-    
-    for (const auto& candidate : candidates) {
-        std::cout << "Removing " << candidate.path.filename().string() << " ("
-                  << (candidate.size / 1024 / 1024) << " MB)\n";
-        
+    for (const auto& c : candidates) {
+        std::cout << "Removing " << c.path.filename().string()
+                  << " (" << (c.size / 1024 / 1024) << " MB)\n";
         try {
-            std::filesystem::remove_all(candidate.path);
-            freed += candidate.size;
-        } catch (const std::exception& e) {
-            std::cerr << "Failed to remove " << candidate.path.string() << ": " << e.what() << "\n";
+            std::filesystem::remove_all(c.path);
+            freed += c.size;
+        } catch (const std::exception& ex) {
+            std::cerr << "Failed to remove " << c.path << ": " << ex.what() << "\n";
         }
     }
-    
     return freed;
 }
 

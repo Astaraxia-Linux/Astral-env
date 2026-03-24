@@ -1,44 +1,35 @@
 #pragma once
 
-#include "system_conf.hpp"
-#include <vector>
+#include "system/system_conf.hpp"
 #include <string>
+#include <vector>
 
 namespace astral_sys {
 
 enum class DiffAction {
-    Install,      // Package needs to be installed
-    Remove,       // Package needs to be removed (with --prune)
-    Enable,       // Service needs to be enabled
-    Disable,      // Service needs to be disabled
-    Change,       // Value needs to be changed
-    Symlink,      // Dotfile needs to be linked
-    Unlink,       // Dotfile link needs to be removed
-    Conflict,     // Existing file blocks the change
+    Install,
+    Remove,
+    Enable,
+    Disable,
+    Change,
+    Symlink,
+    Unlink,
+    Conflict,
 };
 
 struct DiffEntry {
-    std::string type;     // "package", "service", "system", "dotfile", "var"
+    std::string type;
     std::string name;
-    DiffAction action;
-    std::string current;  // Current state (if known)
-    std::string target;   // Target state
+    DiffAction  action;
+    std::string current;
+    std::string target;
 };
 
-// Compute diff between declared config and current system state
 std::vector<DiffEntry> diff_system(
     const SystemConfig& declared,
-    bool global_only = false,
-    const std::string& target_user = ""
+    const std::vector<std::pair<std::string, UserConfig>>& user_configs = {}
 );
 
-// Compute diff with user configs
-std::vector<DiffEntry> diff_system(
-    const SystemConfig& declared,
-    const std::vector<std::pair<std::string, UserConfig>>& user_configs
-);
-
-// Print diff entries to stdout
 void print_diff(const std::vector<DiffEntry>& diffs);
 
 } // namespace astral_sys

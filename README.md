@@ -1,58 +1,64 @@
-# astral-env Documentation
+# astral-env
 
-> *"Because manually configuring your system like a caveman is so last century"*
-
-Version: 1.1.0.0  
-Last Updated: 06 March 2026 (GMT+8)  
-Maintained by: Same One Maniac™ (still just one)
-
+Version: 2.0.0.0  
+Maintained by: Izumi Sonoka  
 *Made in Malaysia, btw*
 
 ---
 
 ## Table of Contents
 
-1. [Introduction](#introduction)
-2. [Installation](#installation)
-3. [Configuration Format](#configuration-format)
-4. [Environment Management](#environment-management)
-5. [System Management](#system-management)
-6. [File Snapshots](#file-snapshots)
-7. [Store & GC](#store--gc)
-8. [Daemon & Auto-snapshots](#daemon--auto-snapshots)
-9. [CLI Reference](#cli-reference)
-10. [Troubleshooting](#troubleshooting)
-11. [FAQ](#faq)
+1. [What Changed in 2.0](#what-changed-in-20)
+2. [Introduction](#introduction)
+3. [Installation](#installation)
+4. [Configuration Format](#configuration-format)
+5. [env.stars Reference](#envstars-reference)
+6. [hw.stars Reference](#hwstars-reference)
+7. [User Config Reference](#user-config-reference)
+8. [Custom Repositories](#custom-repositories)
+9. [Environment Management](#environment-management)
+10. [System Management](#system-management)
+11. [File Snapshots](#file-snapshots)
+12. [Store & GC](#store--gc)
+13. [Daemon & Auto-snapshots](#daemon--auto-snapshots)
+14. [CLI Reference](#cli-reference)
+15. [Init System Support](#init-system-support)
+16. [Troubleshooting](#troubleshooting)
+17. [TODOs](#todos)
+18. [FAQ](#faq)
+
+---
+
+## What Changed in 2.0
+
+**astral-env is now the primary tool.** It no longer just wraps astral it manages its own repositories, fetches its own index, installs binary packages from `/bin/`, installs fonts from `/font/`, and only delegates to astral for source-build recipes that need its full build pipeline.
+
+**Custom repositories work.** You declare repos in `env.stars` using `github::Owner/Repo` shorthand. astral-env fetches the index, resolves packages, and installs from the right path (`/recipes`, `/bin`, or `/font`) based on what's available and your `binaryPkg` setting.
+
+**All TODOs from 1.x are now implemented:**
+- Locale, vconsole, and console font
+- X server driver config
+- Kernel module injection (initrd and runtime)
+- CPU microcode (AMD/Intel)
+- All-firmware loading
+- Graphics driver setup and modprobe blacklisting
+- `/etc/fstab` generation
+- Networking (NetworkManager / dhcpcd / static IP)
+- User account creation with group assignment
+- Shell aliases written to rc files
+- Environment variables written to shell profile and `/etc/environment`
+- Snapshot daemon boot integration (systemd, OpenRC, runit, s6, dinit, SysVinit)
+- Bootloader kernel params and timeout (limine and grub)
+- dinit and SysVinit service management
+- `system sync-index` CLI command
+
+**astral is still used for:** source-build recipes that go through the full `astral -S` pipeline.
 
 ---
 
 ## Introduction
 
-### What is astral-env?
-
-astral-env is the declarative environment and system configuration layer for Astaraxia Linux. It sits on top of Astral and lets you describe your entire system packages, services, dotfiles, hostname, timezone, file snapshots in a single `.stars` file. Then it makes reality match the file.
-
-Think of it as:
-- **Nix** without the functional language that makes your brain hurt
-- **Ansible** without the YAML sprawl and Python dependency
-- **Gentoo `savedconfig`** but for your whole system
-- **A really fancy declarative wrapper** over Astral (that's literally what it is)
-
-### Why astral-env?
-
-- **Declarative**: Describe what you want, not how to get there
-- **Reproducible**: Same `.stars` file = same system, every time
-- **Rollbackable**: Applied something that broke everything? `system rollback`
-- **Snapshot-aware**: Content-addressed file snapshots with deduplication
-- **GC-aware**: Unused store entries get cleaned up automatically
-- **Per-user config**: Global system config + per-user dotfiles/packages in one go
-
-### Why Not astral-env?
-
-- You enjoy typing `systemctl enable` 47 times after a fresh install
-- You like your system configuration scattered across 12 different files
-- You have a great memory and never forget what you changed
-- You're a normal person
+astral-env is the declarative environment and system configuration layer for Astaraxia Linux. Declare your entire system in `.stars` files packages, services, dotfiles, hostname, timezone, kernel modules, hardware, filesystems, users and `system apply` makes it real.
 
 ---
 
@@ -60,44 +66,34 @@ Think of it as:
 
 ### Prerequisites
 
-- Astaraxia AZURE (Astral 5.0.0.0+ obviously)
-- A C++23 compiler (`gcc` or `clang`)
-- `make`
-- `pkg-config`
-- `libcurl` >= 8.0
-- `openssl` >= 3.0 (for SHA-256 store hashing)
-- `zstd` (for file snapshots `astral -S zstd`)
-- The will to live
+- Astaraxia Linux with Astral 5.0.0.0+
+- C++23 compiler (`gcc >= 13` or `clang >= 17`)
+- `make`, `pkg-config`
+- `libcurl >= 8.0`
+- `openssl >= 3.0`
+- `zstd` - `astral -S zstd`
 
-### Building from Source
+### Building
 
 ```bash
-# Clone
 git clone https://github.com/Astaraxia-Linux/Astral-env
 cd Astral-env
-
-# Build
-make -j
-
-# Install
+make -j$(nproc)
 sudo make install
 ```
 
-This installs:
-- `/usr/bin/astral-env` the main binary
-- `/usr/bin/astral-env-snapd` the snapshot daemon
+Installs:
+- `/usr/bin/astral-env`
+- `/usr/bin/astral-env-snapd`
 
 ### First-time Setup
 
 ```bash
-# Enable astral-env in /etc/astral/astral.stars
 sudo astral-env system init
-
-# Create your user config (replace izumi with your username)
-sudo astral-env system init-user izumi
+sudo astral-env system init-user yourname
 ```
 
-You'll need to tell Astral that astral-env exists. Add to `/etc/astral/astral.stars`:
+Enable in `/etc/astral/astral.stars`:
 
 ```
 $AST.core: {
@@ -110,412 +106,541 @@ $AST.core: {
 
 ## Configuration Format
 
-astral-env uses `.stars` files the same syntax as Astral recipes. If you've written a recipe, you already know this.
+All config lives in `.stars` files under `/etc/astral/env/`.
 
-### astral-env.stars (Project Environments)
+### Syntax Rules
 
-For per-project development environments (like a `shell.nix` but readable):
+**Root block:**
 
 ```
-$ENV.Version = "3"
-
-$ENV.Metadata: {
-    Name        = "my-project"
-    Description = "My cool project environment"
-};
-
-$ENV.Packages: {
-    python >= 3.11
-    nodejs >= 20.0
-    git
-};
-
-$ENV.Vars: {
-    DEBUG    = "true"
-    NODE_ENV = "development"
-};
-
-$ENV.Shell: {
-    echo "Welcome to my-project environment"
-    export PATH="$PWD/bin:$PATH"
+$ENV: {
+    ...
 };
 ```
 
-### env.stars (System Configuration)
-
-Lives at `/etc/astral/env/env.stars`. Manages the whole system:
+**Dot-shorthand** dots in key names expand to nested sets:
 
 ```
-$ENV.Version = "3"
-
 $ENV.System: {
-    hostname = "izumi"
-    timezone = "Asia/Kuala_Lumpur"
-};
-
-$ENV.Packages: {
-    neovim
-    htop
-    git
-    zsh
-};
-
-$ENV.Services: {
-    sshd    = "enabled"
-    cronie  = "enabled"
-    NetworkManager = "enabled"
+    Packages.System.Packages: [
+        neovim
+        git
+    ];
 };
 ```
 
-### User Config (izumi.stars)
-
-Lives at `/etc/astral/env/izumi.stars`. Per-user packages, dotfiles, and environment:
+is equivalent to:
 
 ```
-$ENV.Version = "3"
-
-$ENV.User: {
-    name  = "izumi"
-    shell = "/bin/zsh"
-};
-
-$ENV.Packages: {
-    firefox
-    thunderbird
-    mpv
-};
-
-$ENV.Dotfiles: {
-    "/home/izumi/.config/nvim"    = "nvim"
-    "/home/izumi/.zshrc"          = "zshrc"
-    "/home/izumi/.gitconfig"      = "gitconfig"
-};
-
-$ENV.Vars: {
-    EDITOR  = "nvim"
-    BROWSER = "firefox"
-};
-```
-
-Dotfiles in `$ENV.Dotfiles` are symlinked from `/etc/astral/env/dotfiles/izumi/`. Manage your configs in one place, have them appear wherever you need them.
-
-### $ENV.Snap (Automatic Snapshots)
-
-Want astral-env to automatically snapshot important paths? Add this to your config:
-
-```
-$ENV.Snap: {
-    on_interval      = "true"
-    default_interval = "1" "H"    # S=seconds M=minutes H=hours D=days
-
-    path: {
-        "/home/izumi/.config/hyprland"    # uses default_interval (1 hour)
-        "/home/izumi/.zshrc": {
-            interval = "autosave"         # snapshot on every file change
-        };
-        "/etc/astral": {
-            interval = "6" "H"
+$ENV: {
+    System: {
+        Packages: {
+            System: {
+                Packages: [
+                    neovim
+                    git
+                ];
+            };
         };
     };
 };
 ```
 
-`autosave` uses inotify (Linux) to detect changes and snapshot immediately. Everything else is timer-based. The snapshot daemon handles this see [Daemon & Auto-snapshots](#daemon--auto-snapshots).
+**Cases:**
+- Block names: `PascalCase` - `System`, `Packages`, `Services`, `Boot`
+- Key names: `camelCase` - `hostName`, `timeZone`, `binaryPkg`
+
+**Package suffixes:**
+- `-git` - git version
+- `-Vx.x.x` - exact version
+- `-bin` - binary package (requires `binaryPkg = "false"`)
+- `-source` - source build (requires `binaryPkg = "true"`)
+
+**Lists:**
+
+```
+kernelParams = [ "quiet", "rw" ]
+```
+
+**Comments:**
+
+```
+# Single line
+
+#/
+    Multi-line comment.
+    Completely ignored.
+/#
+```
+
+**Includes** pull in another `.stars` file with recursive merge:
+
+```
+$ENV: {
+    Includes: {
+        ./hw.stars
+    };
+};
+```
+
+Both files' values are merged recursively. If both define the same scalar, the including file wins. If both define the same block, the contents are combined.
+
+---
+
+## env.stars Reference
+
+`/etc/astral/env/env.stars` - global system configuration.
+
+```
+$ENV: {
+    Description = "My system"
+
+    Includes: {
+        ./hw.stars
+    };
+
+    System: {
+        hostName   = "my-machine"
+        timeZone   = "Asia/Kuala_Lumpur"
+        layout     = "us"
+        xkbVariant = "altgr-intl"
+
+        i18n: {
+            defaultLocale = "en_US.UTF-8"
+            extraLocaleSettings = {
+                LC_ADDRESS    = "en_MY.UTF-8";
+                LC_MONETARY   = "en_MY.UTF-8";
+                LC_TIME       = "en_MY.UTF-8";
+            };
+        };
+
+        Console: {
+            font   = "Lat2-Terminus16"
+            keyMap = "us"
+        };
+
+        Server: {
+            enable.xserver = "true"
+        };
+
+        Packages: {
+            binaryPkg = "false"
+
+            Repository: {
+                AOHARU: {
+                    url = "github::Izumi-Sonoka/AOHARU"
+                };
+                MyRepo: {
+                    url = "github::MyUser/MyRepo"
+                };
+            };
+
+            System.Fonts: {
+                nerdFonts: {
+                    Iosevka-mono
+                    JetBrainsMono
+                };
+            };
+
+            System.Packages: {
+                neovim
+                wget
+                curl
+                alacritty
+                git
+            };
+        };
+
+        Services: {
+            sshd            = "enabled"
+            NetworkManager  = "enabled"
+        };
+    };
+
+    User: {
+        Users: {
+            iskandar: {
+                normalUser     = "true"
+                homeDir        = "/home/iskandar"
+                moreGroup: [
+                    "wheel",
+                    "networkmanager",
+                    "video",
+                    "audio"
+                ];
+                userConfigPath = "/etc/astral/env/users/iskandar.stars"
+            };
+        };
+    };
+
+    Snap: {
+        on_interval      = "true"
+        default_interval = "1" "H"
+
+        path: {
+            "/home/iskandar/.config/hyprland"
+            "/home/iskandar/.zshrc": {
+                interval          = "autosave"
+                autosave_debounce = "5" "S"
+            };
+        };
+    };
+};
+```
+
+### System fields
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `hostName` | string | System hostname written to `/etc/hostname` |
+| `timeZone` | string | Timezone symlinks `/etc/localtime` |
+| `layout` | string | Keyboard layout |
+| `xkbVariant` | string | XKB variant |
+| `i18n.defaultLocale` | string | Written to `/etc/locale.conf`, locale-gen run |
+| `i18n.extraLocaleSettings` | map | LC_* overrides |
+| `Console.font` | string | Written to `/etc/vconsole.conf` |
+| `Console.keyMap` | string | Written to `/etc/vconsole.conf` |
+| `Server.enable.xserver` | bool | Writes `/etc/X11/xorg.conf.d/20-gpu.conf` |
+| `Packages.binaryPkg` | bool | Prefer `/bin/` tarballs over source builds |
+| `Packages.Repository.<name>.url` | string | Repo URL (see [Custom Repositories](#custom-repositories)) |
+| `Packages.System.Fonts.nerdFonts` | list | NerdFont families to install from `/font/` |
+| `Packages.System.Packages` | list | System packages to install |
+| `Services.<name>` | string | `"enabled"`, `"disabled"`, or `"masked"` |
+
+---
+
+## hw.stars Reference
+
+Hardware configuration typically pulled in from `env.stars` via `Includes`.
+
+```
+$ENV: {
+    Boot: {
+        Initrd: {
+            Kernel.Modules = [
+                "xhci_pci", "ahci", "nvme",
+                "usb_storage", "usbhid", "sd_mod"
+            ];
+        };
+
+        Kernel: {
+            Modules = [ "kvm-amd" ];
+        };
+
+        Loader: {
+            type         = "limine"
+            timeout      = "30"
+            kernelParams = [ "quiet", "rw" ]
+        };
+    };
+
+    Hardware: {
+        cpu               = "amd"
+        enableAllFirmware = "true"
+        graphics          = "amdgpu"
+    };
+
+    FileSystems: {
+        Disk: {
+            "/": {
+                diskPath = "/dev/sda2"
+                fsType   = "ext4"
+            };
+            "/boot": {
+                diskPath = "/dev/sda1"
+                fsType   = "vfat"
+            };
+            "/tmp": {
+                diskPath = "none"
+                fsType   = "tmpfs"
+            };
+        };
+    };
+
+    Networking: {
+        useDHCP = "true"
+        Interface: {
+            wlp0s12f0: {
+                useDHCP = "true"
+            };
+            eth0: {
+                useDHCP  = "false"
+                address  = "192.168.1.100/24"
+                gateway  = "192.168.1.1"
+                dns      = "1.1.1.1"
+            };
+        };
+    };
+};
+```
+
+### Hardware fields
+
+| Key | Applied to |
+|-----|------------|
+| `Boot.Initrd.Kernel.Modules` | `/etc/mkinitcpio.conf` MODULES, or dracut |
+| `Boot.Kernel.Modules` | `/etc/modules-load.d/astral-env.conf` |
+| `Boot.Loader.type` | Bootloader config (`limine.cfg` or `/etc/default/grub`) |
+| `Boot.Loader.timeout` | Bootloader timeout |
+| `Boot.Loader.kernelParams` | Appended to bootloader cmdline |
+| `Hardware.cpu` | `"amd"` → installs `amd-ucode`, `"intel"` → `intel-ucode` |
+| `Hardware.enableAllFirmware` | Installs `linux-firmware` |
+| `Hardware.graphics` | Installs driver package, writes xorg.conf.d, modprobe blacklist |
+| `FileSystems.Disk` | Written to `/etc/fstab` |
+| `Networking.useDHCP` | Enables NetworkManager or dhcpcd globally |
+| `Networking.Interface.<n>` | Per-interface config (DHCP or static: `address`, `gateway`, `dns`) |
+
+---
+
+## User Config Reference
+
+`/etc/astral/env/<username>.stars` or wherever `userConfigPath` points.
+
+```
+$ENV: {
+    Description = "iskandar's config"
+
+    User: {
+        name  = "iskandar"
+        shell = "/bin/zsh"
+    };
+
+    Aliases: {
+        nasi = "echo nasi lemak is tasty"
+        ff   = "fastfetch"
+        ls   = "ls --color=auto"
+    };
+
+    Packages: {
+        firefox
+        thunderbird
+        mpv
+        qtile
+    };
+
+    Config: {
+        Symlinks: {
+            ".config/qtile" = "/astral-env/users/iskandar/qtile"
+        };
+
+        Dotfiles: {
+            "/home/iskandar/.zshrc": {
+                path = "/astral-env/users/iskandar/dotfiles/zshrc"
+            };
+            "/home/iskandar/.gitconfig": {
+                path = "/astral-env/users/iskandar/dotfiles/gitconfig"
+            };
+        };
+    };
+
+    Vars: {
+        EDITOR  = "nvim"
+        BROWSER = "firefox"
+        TERM    = "alacritty"
+    };
+};
+```
+
+### What gets applied
+
+| Section | Applied to |
+|---------|------------|
+| `User.name`, `User.shell` | `useradd` / `usermod` |
+| `Aliases` | Appended to `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` |
+| `Packages` | Installed to `/astral-env/users/<name>/`, binaries symlinked to PATH |
+| `Config.Dotfiles` | Symlinked to declared destination paths |
+| `Config.Symlinks` | Same as Dotfiles destination → source |
+| `Vars` | Appended to shell rc and `/etc/environment` |
+
+---
+
+## Custom Repositories
+
+Declare repos in `$ENV.System.Packages.Repository`. astral-env fetches their index and resolves packages from the right subdirectory.
+
+### URL shorthand
+
+| Shorthand | Expands to |
+|-----------|------------|
+| `github::Owner/Repo` | `https://raw.githubusercontent.com/Owner/Repo/refs/heads/main` |
+| `codeberg::Owner/Repo` | `https://codeberg.org/Owner/Repo/raw/branch/main` |
+| `https://...` | Used as-is |
+
+### Required repo layout
+
+```
+<repo-root>/
+  astral.index                                         package index (same format as AOHARU)
+  recipes/<cat>/<s>/<pkg>/<pkg>-<ver>-<arch>.stars     source recipes
+  bin/<arch>/<cat>/<pkg>-<ver>-<arch>.tar.zst          binary packages
+  font/<family>/<family>-f<type>[-nerd].tar.zst        font tarballs
+```
+
+The index format is the same as astral's `astral.index`. As of v2.1, the hierarchical format is preferred:
+
+```
+/recipes: {
+    app-misc: {
+        neofetch | any | 7.1.0
+        fastfetch | any | 2.41.0
+    };
+    sys-devel: {
+        gcc | x86_64 | 15.2.0
+    };
+};
+/bin: {
+    app-misc: {
+        fastfetch | x86_64 | 2.41.0
+    };
+};
+```
+
+The old flat format (categories at top level, no `/recipes:` wrapper) is still supported for compatibility.
+
+### Install resolution
+
+When you run `system apply`, for each package:
+1. Query cached index files for all declared repos
+2. If `binaryPkg = "true"` look for the package in `/bin/`, download and extract to store
+3. Otherwise delegate to `astral -S <pkg>` which uses `/recipes/`
+4. Fonts always come from `/font/` regardless of `binaryPkg`
+
+Sync indexes manually:
+
+```bash
+sudo astral-env system sync-index
+```
+
+Generate an index for your own repo:
+
+```bash
+astral-sync gen-index --repo MyRepo --dir ~/my-repo --out ~/my-repo/astral.index
+```
 
 ---
 
 ## Environment Management
 
-Per-project environments. Like `nix-shell` but without needing a PhD.
-
-### Creating an Environment
+Per-project dev environments.
 
 ```bash
-# Scaffold a new astral-env.stars
-astral-env init
-
-# Generate lockfile (resolves versions)
-astral-env lock
-
-# Build the environment (installs packages to store)
-astral-env build
+astral-env init               # scaffold astral-env.stars
+astral-env lock               # resolve versions, generate lockfile
+astral-env lock --update pkg  # update one package
+astral-env lock --update      # update everything
+astral-env build              # install from lockfile
+astral-env build --force      # reinstall even if present
+astral-env shell              # enter environment shell
+astral-env run python main.py # run command in environment
+astral-env status             # what's installed vs missing
 ```
 
-### Using the Environment
-
-```bash
-# Drop into an interactive shell with the environment active
-astral-env shell
-
-# Run a single command in the environment
-astral-env run python main.py
-
-# Check what's installed and what's missing
-astral-env status
-```
-
-### Updating
-
-```bash
-# Update a specific package
-astral-env lock --update python
-
-# Update everything
-astral-env lock --update
-```
-
-The lockfile (`astral-env.lock`) pins exact versions. Commit it to your repo. Your teammates will thank you (or they would if you had teammates).
-
-### Store Layout
-
-Packages live in the content-addressed store:
-
-```
-/astral-env/store/
-  sha256-<64hex>-python-3.12.4/
-    bin/
-    lib/
-    ...
-  sha256-<64hex>-nodejs-20.11.0/
-    ...
-```
-
-Multiple projects can share the same store if two projects need the same version of Python, it's stored once. The GC knows which entries are still referenced.
+The lockfile (`astral-env.lock`) pins exact versions and store paths. Commit it.
 
 ---
 
 ## System Management
 
-This is the "make my whole system declarative" part.
-
-### Workflow
-
 ```bash
-# See what would change (safe, read-only)
-sudo astral-env system diff
-
-# Apply changes
-sudo astral-env system apply
-
-# If it goes wrong
-sudo astral-env system rollback
-
-# Check config files for errors
-astral-env system check
-```
-
-### Diffing
-
-`system diff` compares your `.stars` files against actual system state:
-
-```
-astral-env system diff
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  [+] htop          (will install)
-  [+] cpufetch      (will install)
-  [~] sshd          (will enable)
-  [+] /home/izumi/.zshrc  -> dotfiles/izumi/zshrc
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-Legend: `[+]` install/create, `[-]` remove/unlink, `[~]` change, `[!]` conflict.
-
-### Applying
-
-```bash
-# Interactive (asks for confirmation)
-sudo astral-env system apply
-
-# Skip confirmation
-sudo astral-env system apply --yes
-
-# Dry run (shows what would happen, changes nothing)
-sudo astral-env system apply --dry-run
-
-# Apply only global config, skip user configs
+sudo astral-env system diff             # preview all pending changes
+sudo astral-env system apply            # apply everything
+sudo astral-env system apply --yes      # skip confirmation
+sudo astral-env system apply --dry-run  # show only, change nothing
+sudo astral-env system apply --user iskandar
 sudo astral-env system apply --global-only
-
-# Apply only a specific user's config
-sudo astral-env system apply --user izumi
-```
-
-astral-env automatically saves a rollback snapshot before applying anything. You're welcome.
-
-Package installs use `astral --parallel-build` when there are multiple packages so your 47 packages install in parallel instead of one at a time. Coffee break may no longer be required.
-
-### Rolling Back
-
-```bash
-# Roll back to the most recent snapshot
 sudo astral-env system rollback
-
-# List available snapshots
 sudo astral-env system rollback --list
-
-# Roll back to a specific snapshot
-sudo astral-env system rollback --to 2026-03-06_14:32
+sudo astral-env system rollback --to 2026-03-23_14:32
+sudo astral-env system sync-index       # refresh repo indexes
+astral-env system check                 # validate .stars files
 ```
 
-Rollback restores:
-- Service enable/disable states
-- Symlink targets (dotfiles)
-- Hostname and timezone
+### What `system apply` does
 
-It does **not** restore packages (that's destructive and we're not monsters) or regular files (use `snap restore` for that).
+In order:
+1. Hostname and timezone
+2. Packages (binary from `/bin/` or source via `astral -S`)
+3. Fonts from `/font/`
+4. Services (enable/disable)
+5. Dotfile and symlink creation
+6. Locale generation and `/etc/locale.conf`
+7. `/etc/vconsole.conf` (console font and keymap)
+8. X server driver config
+9. Kernel module lists (`/etc/mkinitcpio.conf`, `/etc/modules-load.d/`)
+10. CPU microcode install
+11. All-firmware install
+12. Graphics driver install + modprobe blacklist
+13. `/etc/fstab` generation
+14. Networking config (NetworkManager, dhcpcd, or static IP)
+15. User account creation and group assignment
+16. Shell aliases and environment variables
+17. Snapshot daemon boot registration
+18. Bootloader kernel params and timeout
 
-### Initialising
-
-```bash
-# Create /etc/astral/env/env.stars
-sudo astral-env system init
-
-# Create /etc/astral/env/izumi.stars + dotfiles dir
-sudo astral-env system init-user izumi
-
-# Validate all .stars files in /etc/astral/env/
-astral-env system check
-```
+A rollback snapshot is saved before every apply. Rollback restores: hostname, timezone, service states, and symlinks. It does not restore packages (use `astral -R` manually) or file contents (use `snap restore`).
 
 ---
 
 ## File Snapshots
 
-Content-addressed, zstd-compressed, deduplicated file snapshots. Sounds fancy, works simply.
-
-### Manual Snapshots
-
 ```bash
-# Snapshot a file
-astral-env snap /home/izumi/.zshrc
-
-# Snapshot a whole directory
-astral-env snap /home/izumi/.config/hyprland
-
-# List all snapshots
+astral-env snap /home/iskandar/.zshrc
+astral-env snap /home/iskandar/.config/hyprland
 astral-env snap list
-
-# List snapshots for a specific path
-astral-env snap list /home/izumi/.zshrc
-
-# Restore a snapshot
-astral-env snap restore snap-2026-03-06_14:32:00
-
-# Restore to a different location
-astral-env snap restore snap-2026-03-06_14:32:00 --dest /tmp/zshrc.bak
-```
-
-### How It Works
-
-Snapshots are stored content-addressed under `/astral-env/store/snap/`:
-
-```
-/astral-env/store/snap/
-  sha256-<64hex>/
-    data.zst      # zstd-compressed tar of the snapshotted path
-    meta.json     # original path, permissions, timestamp
-
-/astral-env/snapshots/files/
-  snap-2026-03-06_14:32:00.json   # index entry: links ID → blob + reason
-```
-
-**Deduplication**: If you snapshot the same file twice and it hasn't changed, the second snapshot reuses the existing blob. Storage costs nothing.
-
-**Reasons**: Snapshots are tagged with how they were created `manual`, `pre-apply`, `scheduled`, or `autosave`. Useful for knowing why a snapshot exists when you're digging through the list at 2am.
-
-### Pruning
-
-```bash
-# Keep only the last 5 snapshots per path
+astral-env snap list /home/iskandar/.zshrc
+astral-env snap restore snap-2026-03-23_14:32:00
+astral-env snap restore snap-2026-03-23_14:32:00 --dest /tmp/zshrc.bak
 astral-env snap prune --keep-last 5
-
-# Remove snapshots older than 14 days
 astral-env snap prune --older-than 14d
-
-# Default prune (keep last 5, remove >30 days old)
-astral-env snap prune
 ```
 
-The GC knows about snapshots it will never collect a blob that's referenced by a snapshot index entry. Prune first if you want to free space.
+Snapshots are content-addressed and deduplicated under `/astral-env/store/snap/`. Identical content is stored once regardless of how many times you snapshot it.
 
 ---
 
 ## Store & GC
 
-### The Store
-
-Everything lives under `/astral-env/store/`:
-
-```
-/astral-env/store/
-  sha256-<64hex>-python-3.12.4/    # package entries
-  sha256-<64hex>-nodejs-20.11.0/
-  snap/                             # snapshot blobs (never touched by package GC)
-    sha256-<64hex>/
-      data.zst
-      meta.json
-```
-
-### Garbage Collection
-
 ```bash
-# See what would be collected (safe)
-astral-env gc --dry-run
-
-# Collect entries unused for 30+ days (default)
-astral-env gc
-
-# Be more aggressive
-astral-env gc --max-age 7
-
-# Store usage
-astral-env store size
 astral-env store list
+astral-env store size
+astral-env gc --dry-run
+astral-env gc
+astral-env gc --max-age 7
 ```
 
-The GC:
-- Only collects entries with a `.complete` marker (partial installs are safe)
-- Skips anything referenced by any lockfile found under `/home`, `/root`
-- Skips the `snap/` subdirectory entirely (snapshot GC is separate, via `snap prune`)
-- Skips entries newer than `--max-age` days
+The GC scans `/home` and `/root` for lockfiles. Any store entry referenced by a lockfile is kept. `store/snap/` is never touched by the package GC use `snap prune` for that.
 
 ---
 
 ## Daemon & Auto-snapshots
 
-`astral-env-snapd` handles scheduled and autosave snapshots in the background.
-
-### Starting the Daemon
-
-```bash
-# Start and enable at boot (auto-detects your init system)
-astral-env snapd start
-
-# Other controls
-astral-env snapd stop
-astral-env snapd restart
-astral-env snapd status
-```
-
-Supported init systems: systemd, OpenRC, runit, s6, dinit, launchd, SysVinit.
-
-The daemon reads `$ENV.Snap` blocks from your tracked paths config and:
-- Wakes up every 60 seconds to check if any path is overdue for a scheduled snapshot
-- Uses inotify/kqueue/FSEvents for `autosave` paths, snapshotting within 5 seconds of a change settling
-
-### Autosave Debounce
-
-Multiple rapid writes (e.g. an editor saving) won't create a snapshot per write. The daemon waits for 5 seconds of quiet after the last change before snapshotting. Configurable:
+Configure auto-snapshots in `env.stars` under `$ENV.Snap`:
 
 ```
-$ENV.Snap: {
+Snap: {
+    on_interval      = "true"
+    default_interval = "1" "H"
+
     path: {
-        "/home/izumi/.zshrc": {
+        "/home/iskandar/.config"
+        "/home/iskandar/.zshrc": {
             interval          = "autosave"
             autosave_debounce = "5" "S"
         };
     };
 };
 ```
+
+`autosave` uses inotify. The daemon waits for `autosave_debounce` seconds of quiet after the last change before snapshotting (default: 5s).
+
+```bash
+astral-env snapd start
+astral-env snapd stop
+astral-env snapd restart
+astral-env snapd status
+```
+
+`snapd start` registers the daemon with the detected init system automatically no manual unit file writing needed.
 
 ---
 
@@ -525,192 +650,139 @@ $ENV.Snap: {
 astral-env <command> [options]
 
 Environment Commands:
-  init                  Scaffold astral-env.stars in current directory
-  lock [--update [pkg]] Generate/update lockfile from .stars
-  build [--force]       Build environment from lockfile
-  shell [--dir <d>]     Enter interactive environment shell
-  run <cmd...>          Run command inside the environment
-  status                Show what's installed vs missing
+  init                    Scaffold astral-env.stars
+  lock [--update [pkg]]   Generate/update lockfile
+  build [--force]         Build environment from lockfile
+  shell [--dir <d>]       Enter environment shell
+  run <cmd...>            Run command in environment
+  status                  Show installed vs missing
 
 System Commands:
-  system init           Create /etc/astral/env/env.stars
-  system init-user <u>  Create per-user config + dotfiles directory
-  system diff           Show pending changes
-  system apply          Apply changes (--dry-run, --yes, --user, --global-only)
-  system rollback       Roll back (--list, --to <id>)
-  system check          Validate all .stars files
+  system init             Create /etc/astral/env/env.stars
+  system init-user <u>    Create per-user config
+  system diff             Preview changes
+  system apply            Apply changes (--dry-run, --yes, --user, --global-only)
+  system rollback         Roll back (--list, --to <id>)
+  system sync-index       Refresh repo indexes from all declared repos
+  system check            Validate .stars files
 
 Snapshot Commands:
-  snap <path>           Snapshot a file or directory
-  snap list [path]      List snapshots (optionally filtered by path)
-  snap restore <id>     Restore a snapshot (--dest <path> for alternate location)
-  snap prune            Prune old snapshots (--keep-last N, --older-than Nd)
+  snap <path>             Snapshot a file or directory
+  snap list [path]        List snapshots
+  snap restore <id>       Restore snapshot (--dest <path>)
+  snap prune              Prune (--keep-last N, --older-than Nd)
 
 Store Commands:
-  store list            List all store entries
-  store size            Show total store disk usage
-  gc [--dry-run]        Garbage collect unused entries (--max-age <days>)
+  store list              List store entries
+  store size              Total store size
+  gc [--dry-run]          Collect unused entries (--max-age <days>)
 
 Daemon Commands:
-  snapd start           Start snapshot daemon (enables at boot)
-  snapd stop            Stop snapshot daemon
-  snapd restart         Restart snapshot daemon
-  snapd status          Show daemon status
+  snapd start             Start + register with init system
+  snapd stop              Stop daemon
+  snapd restart           Restart daemon
+  snapd status            Daemon status
 
 Global Options:
-  -v, --verbose         Verbose output
-  -q, --quiet           Quiet output
-  -V, --version         Show version
-  -h, --help            Show this help
+  -v, --verbose           Verbose output
+  -q, --quiet             Quiet output
+  -V, --version           Show version
+  -h, --help              Show help
 ```
+
+---
+
+## Init System Support
+
+| Init | Detected by | Service management | snapd registration |
+|------|-------------|-------------------|-------------------|
+| systemd | `/run/systemd/private` | `systemctl` | Unit file + `systemctl enable` |
+| OpenRC | `/run/openrc/softlevel` | `rc-update` | `/etc/init.d/` + `rc-update add` |
+| runit | `/run/runit` | `/var/service/` symlinks | `/etc/sv/` + symlink |
+| s6 | `/run/s6` | bundle symlinks | `/etc/s6/sv/` service dir |
+| dinit | `/run/dinit` | `dinitctl` | `/etc/dinit.d/` + boot.d symlink |
+| SysVinit | `/etc/inittab` | `service(8)` + `chkconfig`/`update-rc.d` | `/etc/rc.local` entry |
 
 ---
 
 ## Troubleshooting
 
-### "astral-env is not enabled"
+**`astral-env is not enabled`** add `astral-env = "enabled"` to `$AST.core` in `/etc/astral/astral.stars`.
 
-```
-ERROR: astral-env is not enabled.
-       Set 'astral-env = "enabled"' in $AST.core in /etc/astral/astral.stars
-```
+**`astral-env-system is not enabled`** add `astral-env-system = "enabled"` to the same block.
 
-**Fix**: Edit `/etc/astral/astral.stars` and add:
-```
-$AST.core: {
-    astral-env = "enabled"
-};
-```
+**`zstd is required for snapshots`** run `astral -S zstd`.
 
-### "astral-env-system is not enabled"
+**`No lockfile found`** run `astral-env lock` first.
 
-Same deal but for system commands.
+**Package not found in any repo** run `astral-env system sync-index` to refresh indexes, then try again.
 
-**Fix**:
-```
-$AST.core: {
-    astral-env        = "enabled"
-    astral-env-system = "enabled"
-};
-```
+**Service management says `not supported`** your init system wasn't detected. Check `/run/` for the marker file. File an issue with `uname -a` and init name.
 
-### "zstd is required for snapshots"
+**Font not installing** the font tarball needs to exist at `<repo-base>/font/<family>/<family>[-nerd].tar.zst`. Check your repo layout.
 
-**Fix**:
-```bash
-sudo astral -S zstd
-```
+**`system apply` stops at fstab** `/etc/fstab` generation is only done if `FileSystems.Disk` is declared. If something is wrong, check the generated file before rebooting.
 
-### "No lockfile found"
+---
 
-You forgot to run `lock` before `build`.
+## TODOs
 
-**Fix**:
-```bash
-astral-env lock
-astral-env build
-```
+- **`--prune` on `system apply`** flag is accepted but removal of packages not in the config is not implemented.
+- **`EasterEgg.ErrorsCustomizer`** defined in spec, not implemented. Probably never will be.
+- **Binary install PATH wiring for user packages** user packages installed to `/astral-env/users/<n>/` need their `/bin/` dirs added to that user's PATH. Currently the binaries are there but PATH isn't automatically updated.
+- **`Packages.Repository` inheritance in user configs** user packages correctly query all repos declared in `env.stars`, but the `binaryPkg` value from `env.stars` is not inherited into user package resolution yet.
+- **astral-env-snapd: s6 bundle wiring** the s6 service dir is created but the user must manually add it to their bundle. Automating this requires knowing the bundle path.
 
-### "Snapshot blob not found"
+### Known issues
 
-The blob was GC'd before the index entry was pruned. This shouldn't happen normally (the GC checks the snap index), but if it does:
-
-**Fix**:
-```bash
-# Remove the dangling index entry
-astral-env snap prune --keep-last 0  # nuclear option
-# or manually remove the specific .json from /astral-env/snapshots/files/
-```
-
-### "Failed to install \<package\>"
-
-astral-env uses `astral --parallel-build` for multiple packages. Check astral's own logs:
-
-```bash
-ls /var/log/astral_sync_*.log
-tail -f /var/log/astral_sync_*.log
-```
-
-### Rollback only partially worked
-
-Rollback restores services, symlinks, hostname, and timezone. It cannot restore:
-- **Packages**: Uninstalling things that were just installed is destructive. Use `astral -R` manually.
-- **Regular files** that were overwritten (not symlinks): Use `snap restore` if you had a snapshot.
-
-**Lesson learned**: Run `astral-env snap /important/file` before doing anything scary.
+- `system rollback` restores hostname, timezone, services, and symlinks. It cannot restore packages or regular file contentsuse `snap restore` for files.
+- The GC searches `/home` and `/root` for lockfiles. Projects stored elsewhere need a central registry at `/astral-env/registry` (not yet implemented) or their store entries may be collected.
+- `astral-env shell` with zsh sets `ZDOTDIR` which can conflict with existing zsh configs that set their own `ZDOTDIR`.
+- Font install tries multiple filename conventions (`<family>-nerd.tar.zst`, `<family>.tar.zst`) but if a repo uses a different naming scheme, the install silently fails.
+- `process.cpp` drains stdout before stderrcould deadlock on very chatty subprocesses. Needs `select`/`poll` or threading to fix properly.
 
 ---
 
 ## FAQ
 
-### Why C++ instead of POSIX sh like Astral?
+**Does astral-env replace astral?**
+Mostly. astral-env handles index fetching, binary installs, font installs, and all system config. Astral is still called for source-build recipes via `astral -S`. You still need Astral installed.
 
-Astral gets away with sh because package operations are naturally sequential and shelling out to `tar`, `make`, etc. is fine. astral-env needs concurrent file hashing, inotify event loops, content-addressed storage, and a proper GC doing that in sh would be a crime against humanity. C++20 with `std::filesystem` hits the sweet spot.
+**Why does astral-env still call astral for source builds?**
+Astral's build pipeline (`build_from_recipe_enhanced`, sandboxing, checksum verification, transaction system) is mature and handles edge cases that would take a long time to reimplement. It makes more sense to delegate than to rewrite.
 
-### Does astral-env replace Astral?
+**Can I use my own GitHub repo as a package repo?**
+Yes. Create a repo with the layout described in [Custom Repositories](#custom-repositories), generate an `astral.index` with `astral-sync gen-index`, and declare it in `env.stars`. Works with public GitHub and Codeberg repos out of the box.
 
-No. astral-env is a layer on top of Astral. It uses `astral -S` to install packages it doesn't reimplement the package manager.
+**Can I have multiple repos?**
+Yes. astral-env queries all declared repos in order. The first repo that has the package wins.
 
-### Can I use astral-env without system management?
+**How does `Includes` merging work?**
+Recursively. Blocks are combined, scalars from the including file win on conflict. So if `env.stars` and `hw.stars` both define `Packages`, the package lists are merged. If they both define `hostName`, `env.stars`'s value is used.
 
-Yes. The project environment features (`init`, `lock`, `build`, `shell`, `run`) work completely independently without `astral-env-system = "enabled"`.
+**What's the difference between `Config.Dotfiles` and `Config.Symlinks`?**
+Nothing meaningful both create symlinks from a destination to a source. `Dotfiles` expects the source to be inside your dotfiles store (`/astral-env/users/<n>/dotfiles/`). `Symlinks` is more freeform. Use whichever makes the intent clearer.
 
-### Are my dotfiles safe?
+**Are my dotfiles safe?**
+`system apply` backs up whatever exists at a dotfile destination before symlinking, and saves a rollback snapshot before touching anything. Keep backups anyway.
 
-When applying dotfile symlinks, astral-env:
-1. Checks if something already exists at the destination
-2. Asks for confirmation before overwriting a regular file (unless `--yes`)
-3. Saves a rollback snapshot of the current state before applying anything
-
-So... yes, probably. Keep backups anyway. We're not responsible for your `.zshrc`.
-
-### What happens if two users have conflicting config?
-
-The global `env.stars` applies first. Per-user configs apply on top. If there's a conflict (e.g. two users want different versions of the same package), it shows up as a `[!]` conflict in `system diff`. You'll need to resolve it manually in the config files.
-
-### Can I track my configs in git?
-
-Absolutely yes. That's the whole point. Put your `.stars` files and `/etc/astral/env/dotfiles/` in a repo. Fresh install → clone → `system apply` → done.
-
-### How is this different from dotfiles managers?
-
-dotfiles managers (chezmoi, stow, etc.) only handle dotfiles. astral-env handles dotfiles *and* packages *and* services *and* system settings *and* snapshots, all in one declarative file. It's more opinionated but covers more ground.
-
-### Snapshot deduplication how much space does it actually save?
-
-Depends entirely on how often your files change. If you're snapshotting your neovim config hourly and only editing it once a day, 23 of those 24 snapshots are free (zero bytes). If you're snapshotting a directory that changes every hour, you're paying full price each time. `astral-env store size` will tell you the truth.
-
-### Who maintains this?
-
-Same One Maniac™. Two projects, one maniac. The math is concerning.
+**Who maintains this?**
+Izumi Sonoka. Two projects, one person. Send help.
 
 ---
 
 ## Credits
 
-- **Created by**: One Maniac™ (the same one)
+- **Created by**: Izumi Sonoka
 - **Inspired by**: NixOS, GNU Stow, Ansible, and the desire to never type `systemctl enable` again
-- **Special thanks**: The C++ committee, for `std::filesystem` finally working properly
 
 ---
 
 ## License
 
-GPL-3.0, same as Astral. Because consistency.
+GPL-3.0 - same as Astral.
 
 ---
 
-## Final Notes
-
-> *"astral-env: because your system configuration shouldn't live in your head"*  
-> Also nobody, ever
-
-astral-env is young and opinionated. The store format is stable. The `.stars` syntax is stable. Everything else might change. Pin your versions.
-
-If you have suggestions, bugs, or existential crises about declarative configuration, open an issue. The One Maniac™ will get to it eventually.
-
----
-
-**Last updated**: 06 March 2026 (GMT+8)  
-**Documentation version**: 1.0  
-**Sanity level**: Surprisingly intact
+**Last updated**: 2026-03-24 (GMT+8)  
+**Version**: 2.0.0.0
