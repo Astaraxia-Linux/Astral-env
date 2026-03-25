@@ -1,7 +1,7 @@
 # astral-env
 
 Version: 2.0.0.0  
-Maintained by: Izumi Sonoka  
+Maintained by: Astaraxia-Linux  
 *Made in Malaysia, btw*
 
 ---
@@ -112,20 +112,28 @@ All config lives in `.stars` files under `/etc/astral/env/`.
 
 **Root block:**
 
+Use the full nested form this is the canonical and unambiguous style:
+
 ```
 $ENV: {
-    ...
+    System: {
+        Packages: {
+            Repository: { ... };
+        };
+    };
 };
 ```
 
-**Dot-shorthand** dots in key names expand to nested sets:
+**Dot-shorthand in keys** - dots inside a key name within an already-open block expand to nested maps:
 
 ```
-$ENV.System: {
-    Packages.System.Packages: [
-        neovim
-        git
-    ];
+$ENV: {
+    System: {
+        Packages.System.Packages: [
+            neovim
+            git
+        ];
+    };
 };
 ```
 
@@ -145,6 +153,8 @@ $ENV: {
     };
 };
 ```
+
+> **Note:** dot-shorthand only works *inside* a block. Do not use `$ENV.System.Packages.Repository: { ... }` as the top-level header use `$ENV: { ... }` with nested blocks instead.
 
 **Cases:**
 - Block names: `PascalCase` - `System`, `Packages`, `Services`, `Boot`
@@ -228,10 +238,29 @@ $ENV: {
 
             Repository: {
                 AOHARU: {
-                    url = "github::Izumi-Sonoka/AOHARU"
+                    url = "github::Astaraxia-Linux/AOHARU"
+
+                    Mirrors: [
+                        "codeberg::Izumi/AOHARU"
+                    ];
+
+                    Priority: {
+                        order = "2"
+                        options: [ "fallback" ];
+                    };
                 };
                 MyRepo: {
                     url = "github::MyUser/MyRepo"
+
+                    Mirrors: [
+                        "codeberg::MyUser/MyRepo",
+                        "https://my-mirror.example.com/MyRepo"
+                    ];
+
+                    Priority: {
+                        order = "1"
+                        options: [];
+                    };
                 };
             };
 
@@ -303,6 +332,9 @@ $ENV: {
 | `Server.enable.xserver` | bool | Writes `/etc/X11/xorg.conf.d/20-gpu.conf` |
 | `Packages.binaryPkg` | bool | Prefer `/bin/` tarballs over source builds |
 | `Packages.Repository.<name>.url` | string | Repo URL (see [Custom Repositories](#custom-repositories)) |
+| `Packages.Repository.<name>.Mirrors` | list | Fallback URLs tried in order if primary fails |
+| `Packages.Repository.<name>.Priority.order` | string | Integer; lower = queried first |
+| `Packages.Repository.<name>.Priority.options` | list | `"fallback"` = only query if package not found elsewhere |
 | `Packages.System.Fonts.nerdFonts` | list | NerdFont families to install from `/font/` |
 | `Packages.System.Packages` | list | System packages to install |
 | `Services.<name>` | string | `"enabled"`, `"disabled"`, or `"masked"` |
@@ -456,7 +488,7 @@ $ENV: {
 
 ## Custom Repositories
 
-Declare repos in `$ENV.System.Packages.Repository`. astral-env fetches their index and resolves packages from the right subdirectory.
+Declare repos in `$ENV.System.Packages.Repository` (use the nested block form see [Configuration Format](#configuration-format)). astral-env fetches their index and resolves packages from the right subdirectory.
 
 ### URL shorthand
 
@@ -470,13 +502,15 @@ Declare repos in `$ENV.System.Packages.Repository`. astral-env fetches their ind
 
 ```
 <repo-root>/
-    astral.index                                         package index (same format as AOHARU)
-    recipes/<cat>/<s>/<pkg>/<pkg>-<ver>-<arch>.stars     source recipes
-    bin/<arch>/<cat>/<pkg>-<ver>.stars                   pointer recipe
-    bin/<arch>/<cat>/<pkg>-<ver>-<arch>.tar.bz2          binary package
-    font/<family>/<family>-f<type>[-nerd].stars          pointer recipe
-    font/<family>/<family>-f<type>[-nerd].tar.bz2        font tarball
+    astral.index                                              package index
+    recipes/<cat>/<s>/<pkg>/<pkg>-<ver>-<arch>.stars          source recipes
+    bin/<arch>/<cat>/<s>/<pkg>-<ver>.stars                    binary pointer recipe
+    bin/<arch>/<cat>/<s>/<pkg>-<ver>-<arch>.tar.bz2           binary tarball
+    font/<family>/<family>-f<type>[-nerd].stars               font pointer recipe
+    font/<family>/<family>-f<type>[-nerd].tar.bz2             font tarball
 ```
+
+`<s>` is the first letter of the package name (letter shard). For example, `fastfetch` goes under `f/`.
 
 The index format is the same as astral's `astral.index`. As of v2.1, the hierarchical format is preferred:
 
@@ -499,13 +533,49 @@ The index format is the same as astral's `astral.index`. As of v2.1, the hierarc
 
 The old flat format (categories at top level, no `/recipes:` wrapper) is still supported for compatibility.
 
+### Example
+
+```
+$ENV: {
+    System: {
+        Packages: {
+            Repository: {
+                AOHARU: {
+                    url = "github::Astaraxia-Linux/AOHARU"
+
+                    Mirrors: [
+                        "codeberg::Izumi/AOHARU"
+                    ];
+
+                    Priority: {
+                        order = "2"
+                        options: [ "fallback" ];
+                    };
+                };
+                MyRepo: {
+                    url = "github::MyUser/MyRepo"
+
+                    Priority: {
+                        order = "1"
+                        options: [];
+                    };
+                };
+            };
+        };
+    };
+};
+```
+
+`Priority.order` - repos with lower numbers are queried first. `"fallback"` means the repo is only queried if the package was not found in any non-fallback repo. Mirrors are tried in list order if the primary URL fails.
+
 ### Install resolution
 
 When you run `system apply`, for each package:
-1. Query cached index files for all declared repos
+1. Sort declared repos by `Priority.order` (ascending); skip fallback repos in first pass
 2. If `binaryPkg = "true"` look for the package in `/bin/`, download and extract to store
 3. Otherwise delegate to `astral -S <pkg>` which uses `/recipes/`
-4. Fonts always come from `/font/` regardless of `binaryPkg`
+4. If not found in any non-fallback repo, retry against fallback repos
+5. Fonts always come from `/font/` regardless of `binaryPkg`
 
 Sync indexes manually:
 
@@ -721,7 +791,7 @@ Global Options:
 
 **Service management says `not supported`** your init system wasn't detected. Check `/run/` for the marker file. File an issue with `uname -a` and init name.
 
-**Font not installing** the font tarball needs to exist at `<repo-base>/font/<family>/<family>[-nerd].tar.zst`. Check your repo layout.
+**Font not installing** the font tarball needs to exist at `<repo-base>/font/<family>/<family>-f<type>[-nerd].tar.bz2`. Check your repo layout and that `<type>` matches what's declared (`ttf` or `otf`).
 
 **`system apply` stops at fstab** `/etc/fstab` generation is only done if `FileSystems.Disk` is declared. If something is wrong, check the generated file before rebooting.
 
@@ -757,7 +827,7 @@ Astral's build pipeline (`build_from_recipe_enhanced`, sandboxing, checksum veri
 Yes. Create a repo with the layout described in [Custom Repositories](#custom-repositories), generate an `astral.index` with `astral-sync gen-index`, and declare it in `env.stars`. Works with public GitHub and Codeberg repos out of the box.
 
 **Can I have multiple repos?**
-Yes. astral-env queries all declared repos in order. The first repo that has the package wins.
+Yes. astral-env queries repos sorted by `Priority.order` (lowest first). Repos marked `"fallback"` are only tried if the package isn't found in any other repo. The first matching repo wins.
 
 **How does `Includes` merging work?**
 Recursively. Blocks are combined, scalars from the including file win on conflict. So if `env.stars` and `hw.stars` both define `Packages`, the package lists are merged. If they both define `hostName`, `env.stars`'s value is used.
@@ -769,13 +839,14 @@ Nothing meaningful both create symlinks from a destination to a source. `Dotfile
 `system apply` backs up whatever exists at a dotfile destination before symlinking, and saves a rollback snapshot before touching anything. Keep backups anyway.
 
 **Who maintains this?**
-Izumi Sonoka. Two projects, one person. Send help.
+Astaraxia-Linux. Originally created by Izumi Sonoka.
 
 ---
 
 ## Credits
 
 - **Created by**: Izumi Sonoka
+- **Maintained by**: Astaraxia-Linux
 - **Inspired by**: NixOS, GNU Stow, Ansible, and the desire to never type `systemctl enable` again
 
 ---
@@ -786,5 +857,5 @@ GPL-3.0 - same as Astral.
 
 ---
 
-**Last updated**: 2026-03-24 (GMT+8)  
+**Last updated**: 2026-03-25 (GMT+8)  
 **Version**: 2.0.0.0
