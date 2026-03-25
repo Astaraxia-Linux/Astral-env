@@ -470,10 +470,12 @@ Declare repos in `$ENV.System.Packages.Repository`. astral-env fetches their ind
 
 ```
 <repo-root>/
-  astral.index                                         package index (same format as AOHARU)
-  recipes/<cat>/<s>/<pkg>/<pkg>-<ver>-<arch>.stars     source recipes
-  bin/<arch>/<cat>/<pkg>-<ver>-<arch>.tar.zst          binary packages
-  font/<family>/<family>-f<type>[-nerd].tar.zst        font tarballs
+    astral.index                                         package index (same format as AOHARU)
+    recipes/<cat>/<s>/<pkg>/<pkg>-<ver>-<arch>.stars     source recipes
+    bin/<arch>/<cat>/<pkg>-<ver>.stars                   pointer recipe
+    bin/<arch>/<cat>/<pkg>-<ver>-<arch>.tar.bz2          binary package
+    font/<family>/<family>-f<type>[-nerd].stars          pointer recipe
+    font/<family>/<family>-f<type>[-nerd].tar.bz2        font tarball
 ```
 
 The index format is the same as astral's `astral.index`. As of v2.1, the hierarchical format is preferred:

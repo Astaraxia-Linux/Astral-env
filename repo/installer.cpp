@@ -35,12 +35,13 @@ std::optional<InstallResult> try_binary(const std::string& pkg_name,
     // Filename convention: <pkg>-<ver>-<arch>.tar.zst (or .tar.gz, .tar.xz)
     std::vector<std::string> exts = {".tar.zst", ".tar.xz", ".tar.gz", ".tar.bz2"};
 
-    auto slug = entry.cat_pkg.substr(entry.cat_pkg.rfind('/') + 1);
-    auto cat  = entry.cat_pkg.substr(0, entry.cat_pkg.rfind('/'));
+    auto slug  = entry.cat_pkg.substr(entry.cat_pkg.rfind('/') + 1);
+    auto cat   = entry.cat_pkg.substr(0, entry.cat_pkg.rfind('/'));
+    std::string shard(1, slug.empty() ? 'a' : slug[0]);
 
     for (const auto& ext : exts) {
         std::string filename = slug + "-" + entry.version + "-" + entry.arch + ext;
-        std::string url = bin_url(repo, cat, filename);
+        std::string url = bin_url(repo, entry.arch, cat, shard, filename);
 
         auto store_path = store_root / (slug + "-" + entry.version);
         if (std::filesystem::exists(store_path / ".complete")) {

@@ -1,4 +1,5 @@
 #include "system/system_conf.hpp"
+#include <algorithm>
 #include "env/parser.hpp"
 #include "env/node.hpp"
 
@@ -48,17 +49,30 @@ bool k_is_item(const std::string& k) {
 
 void parse_repos(PackagesConfig& out, const Node& repo_node) {
     if (!repo_node.is_map()) return;
-    for (const auto& [name, v] : repo_node.map()) {
-        if (k_is_item(name)) continue;
-        RepoConfig r;
-        r.name = name;
-        if (v.is_map()) {
-            if (auto u = v.get("url"); u && (*u)->is_str()) r.url = (*u)->str();
-        } else if (v.is_str()) {
-            r.url = v.str();
+    for (const auto& [name, vn] : repo_node.map()) {
+        if (k_is_item(name) || !vn.is_map()) continue;
+        RepoConfig rc;
+        rc.name = name;
+        if (auto u = vn.get("url"); u && (*u)->is_str())
+            rc.url = (*u)->str();
+        // Mirrors list
+        if (auto p = vn.get("Mirrors"); p && (*p)->is_list())
+            for (const auto& m : (*p)->list())
+                if (m.is_str()) rc.mirrors.push_back(m.str());
+        // Priority block
+        if (auto p = vn.get_path("Priority.order"); p && (*p)->is_str()) {
+            try { rc.priority_order = std::stoi((*p)->str()); } catch (...) {}
         }
-        out.repos.push_back(std::move(r));
+        if (auto p = vn.get_path("Priority.options"); p && (*p)->is_list())
+            for (const auto& opt : (*p)->list())
+                if (opt.is_str() && opt.str() == "fallback") rc.is_fallback = true;
+        out.repos.push_back(std::move(rc));
     }
+    std::stable_sort(out.repos.begin(), out.repos.end(),
+        [](const RepoConfig& a, const RepoConfig& b) {
+            if (a.is_fallback != b.is_fallback) return !a.is_fallback;
+            return a.priority_order < b.priority_order;
+        });
 }
 
 void parse_fonts(FontConfig& out, const Node& n) {
@@ -205,7 +219,7 @@ SystemConfig build_system(const NodeMap& root) {
     if (auto p = r.get_path("System.Server.enable.xserver"); p && (*p)->is_str())
         cfg.xserver = str_bool((*p)->str());
 
-    if (auto p = r.get_path("System.Packages"); p) parse_packages(cfg.packages, **p);
+    parse_packages(cfg.packages, r);  // parse_packages traverses System.Packages and Repository from root
 
     if (auto p = r.get_path("System.Services"); p && (*p)->is_map()) {
         for (const auto& [svc, vn] : (*p)->map()) {

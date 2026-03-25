@@ -47,7 +47,7 @@ std::vector<RepoEntry> parse_repos(const env::NodeMap& root) {
     if (repos.empty()) {
         repos.push_back({
             "AOHARU",
-            "https://raw.githubusercontent.com/Izumi-Sonoka/AOHARU/refs/heads/main",
+            "https://raw.githubusercontent.com/Astaraxia-Linux/AOHARU/refs/heads/main",
             "", true
         });
     }
@@ -66,9 +66,10 @@ std::string recipe_url(const RepoEntry& r, const std::string& cat,
     return r.raw_url + "/recipes/" + cat + "/" + shard + "/" + pkg + "/" + filename;
 }
 
-std::string bin_url(const RepoEntry& r, const std::string& cat,
+std::string bin_url(const RepoEntry& r, const std::string& arch,
+                    const std::string& cat, const std::string& shard,
                     const std::string& filename) {
-    return r.raw_url + "/bin/" + cat + "/" + filename;
+    return r.raw_url + "/bin/" + arch + "/" + cat + "/" + shard + "/" + filename;
 }
 
 std::string font_url(const RepoEntry& r, const std::string& family,

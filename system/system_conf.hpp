@@ -20,8 +20,11 @@ struct ConsoleConfig {
 };
 
 struct RepoConfig {
-    std::string name;
-    std::string url;
+    std::string              name;
+    std::string              url;
+    std::vector<std::string> mirrors;
+    int                      priority_order = 99;
+    bool                     is_fallback    = false;
 };
 
 struct FontConfig {

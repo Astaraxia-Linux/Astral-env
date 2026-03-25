@@ -3,6 +3,7 @@
 #include "util/parse.hpp"
 #include <algorithm>
 #include <cctype>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -201,37 +202,43 @@ std::optional<BinEntry> find_latest(
 
 std::vector<std::string> list_categories(const std::filesystem::path& repo_bin_dir) {
     std::vector<std::string> categories;
-    
+
     if (!std::filesystem::exists(repo_bin_dir)) {
         return categories;
     }
-    
-    for (const auto& dir : std::filesystem::directory_iterator(repo_bin_dir)) {
-        if (dir.is_directory()) {
-            categories.push_back(dir.path().filename().string());
+
+    // Layout: bin/<arch>/<cat>/ — iterate arch dirs, collect unique category names
+    std::set<std::string> seen;
+    for (const auto& arch_dir : std::filesystem::directory_iterator(repo_bin_dir)) {
+        if (!arch_dir.is_directory()) continue;
+        for (const auto& cat_dir : std::filesystem::directory_iterator(arch_dir.path())) {
+            if (!cat_dir.is_directory()) continue;
+            auto cat = cat_dir.path().filename().string();
+            if (seen.insert(cat).second)
+                categories.push_back(cat);
         }
     }
-    
+
     std::sort(categories.begin(), categories.end());
     return categories;
 }
 
 std::vector<std::string> list_packages(const std::filesystem::path& repo_bin_dir, const std::string& category) {
-    std::vector<std::string> packages;
-    
-    auto category_dir = repo_bin_dir / category;
-    if (!std::filesystem::exists(category_dir)) {
-        return packages;
-    }
-    
-    for (const auto& dir : std::filesystem::directory_iterator(category_dir)) {
-        if (dir.is_regular_file() && dir.path().extension() == ".stars") {
-            packages.push_back(dir.path().stem().string());
+    std::vector<std::string> result;
+    auto cat_dir = repo_bin_dir / category;
+    if (!std::filesystem::exists(cat_dir)) return result;
+
+    // Layout: bin/<arch>/<cat>/<shard>/<pkg>-<ver>.stars
+    for (const auto& shard_entry : std::filesystem::directory_iterator(cat_dir)) {
+        if (!shard_entry.is_directory()) continue;
+        for (const auto& entry : std::filesystem::directory_iterator(shard_entry.path())) {
+            if (!entry.is_regular_file()) continue;
+            auto name = entry.path().filename().string();
+            if (name.size() > 6 && name.substr(name.size() - 6) == ".stars")
+                result.push_back(name.substr(0, name.size() - 6));
         }
     }
-    
-    std::sort(packages.begin(), packages.end());
-    return packages;
+    return result;
 }
 
 } // namespace repo

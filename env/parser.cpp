@@ -104,12 +104,24 @@ struct Parser {
         } else if (at(TokKind::String)) {
             key = get().text;
         } else if (at(TokKind::Dollar)) {
-            // $ENV or $ENV.Something — consume $, then ident
-            get();
+            // $ENV or $ENV.Something — consume $, then ident (dots are eaten by lexer,
+            // so sub-keys arrive as plain Ident tokens).
+            get(); // $
             if (!at(TokKind::Ident)) throw ParseError(peek().line, "expected identifier after '$'");
-            key = "$" + get().text;
-            // consume optional .Subkey
-            while (at(TokKind::Ident) || (peek().text.find('.') != std::string::npos)) break;
+            get(); // ENV — consume and discard the header name
+            // Collect remaining ident segments as the actual dotpath key
+            key = "";
+            while (at(TokKind::Ident) &&
+                   !at(TokKind::Colon) && !at(TokKind::Eq) &&
+                   !at(TokKind::LBrace) && !at(TokKind::Semicolon)) {
+                if (!key.empty()) key += ".";
+                key += get().text;
+            }
+            if (key.empty()) {
+                // bare $ENV with no subpath — skip this entry
+                skip_semicolons();
+                return;
+            }
         } else {
             // Skip unparseable token
             get();
