@@ -47,8 +47,8 @@ void print_help(const char* prog) {
               << "  status                Show what's installed vs missing\n"
               << "\n"
               << "System Commands:\n"
-              << "  system init           Create /etc/astral/env/env.stars
-  system hw-init        Detect hardware and write /etc/astral/env/hw.stars\n"
+              << "  system init           Create /etc/astral/env/env.stars\n"
+              << "  system hw-init        Detect hardware and write /etc/astral/env/hw.stars\n"
               << "  system init-user <u>  Create per-user config + dotfiles directory\n"
               << "  system diff           Show pending changes\n"
               << "  system apply          Apply changes (--dry-run, --yes, --user, --global-only)\n"

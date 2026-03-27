@@ -46,9 +46,10 @@ std::vector<RepoEntry> parse_repos(const env::NodeMap& root) {
     // Default: AOHARU
     if (repos.empty()) {
         repos.push_back({
-            "AOHARU",
-            "https://raw.githubusercontent.com/Astaraxia-Linux/AOHARU/refs/heads/main",
-            "", true
+            .name = "AOHARU",
+            .raw_url = "https://raw.githubusercontent.com/Astaraxia-Linux/AOHARU/refs/heads/main",
+            .index_url = "",
+            .enabled = true
         });
     }
 
